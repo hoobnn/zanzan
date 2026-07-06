@@ -25,4 +25,8 @@ struct SchemaV1Tests {
         #expect(ZanzanMigrationPlan.schemas.count == 1)
         #expect(SchemaV1.versionIdentifier == Schema.Version(1, 0, 0))
     }
+
+    @Test func SchemaV1登记全部15张表() {
+        #expect(SchemaV1.models.count == 15)
+    }
 }
