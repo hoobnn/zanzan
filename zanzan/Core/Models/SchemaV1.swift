@@ -12,6 +12,9 @@ enum SchemaV1: VersionedSchema {
             StoredCategory.self,
             StoredTransaction.self,
             StoredTag.self,
+            StoredTransactionLink.self,
+            StoredBudget.self,
+            StoredCreditPool.self,
         ]
     }
 }
