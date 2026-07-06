@@ -15,6 +15,8 @@ enum SchemaV1: VersionedSchema {
             StoredTransactionLink.self,
             StoredBudget.self,
             StoredCreditPool.self,
+            StoredInstallmentPlan.self,
+            StoredInstallmentPeriod.self,
         ]
     }
 }
