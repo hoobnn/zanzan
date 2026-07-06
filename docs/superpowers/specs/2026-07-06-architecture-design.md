@@ -39,7 +39,9 @@ zanzan/
 - **无 DI 框架**。Projector/Commands 是接收 `ModelContext` 的无状态 struct，View 就地构造。
 - 读路径：简单列表用 `@Query`；聚合/跨表走 Projector（谓词下推，见文档第 4/8 节）。
 - 写路径：表单绑定 `*Draft`（校验 + 归一化）→ 提交调 `*Commands`（维护不变量与 `updatedAt`）。
-- Swift 6 严格并发：全 app 默认 MainActor 隔离；重计算（统计、CSV 导入）需要时再下放 `@ModelActor`，不预建。
+- **事务边界**：每条业务命令收尾显式 `modelContext.save()`，一条命令 = 一个事务（autosave 时机不可预测，不依赖）。
+- **关系删除规则**：全库软删无硬删除，`deleteRule` 一律保持默认 `.nullify`、禁用 `.cascade`——级联软删由 Commands 显式执行，不交给存储层。
+- Swift 6 严格并发：全 app 默认 MainActor 隔离（工程已设 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）；重计算（统计、CSV 导入）需要时再下放 `@ModelActor`，不预建。**模型实例与 `ModelContext` 不跨 actor**：跨界只传 `uuid` 到目标 context 重取；Projector 输出纯值类型展示模型，正是为了可安全跨 actor / 跨层传递。
 
 ## 3. 导航与多平台
 
