@@ -50,3 +50,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
+
+# === Agent skills (本地工具链，非项目源码) ===
+.agents/
+skills-lock.json
