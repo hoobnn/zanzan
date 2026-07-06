@@ -53,4 +53,5 @@ pnpm-debug.log*
 
 # === Agent skills (本地工具链，非项目源码) ===
 .agents/
+.claude/
 skills-lock.json
