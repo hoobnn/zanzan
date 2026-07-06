@@ -49,6 +49,35 @@ final class StoredTransaction {
     /// 空串 = 非到账单
     var settlementKind: TransactionLinkKind? { TransactionLinkKind(rawValue: settlementKindRawValue) }
 
+    /// 收支符号金额：支出负、收入正、转账 0；语义未知按 0（读路径负责剔除与提示）
+    var signedMinorUnits: Int {
+        switch kind {
+        case .expense: -amountMinorUnits
+        case .income: amountMinorUnits
+        case .transfer, nil: 0
+        }
+    }
+
+    /// 对指定账户的余额影响（分）。fee 恒为流出：
+    /// 转出方 delta = −(amount + fee)，转入方 = +(targetAmount ?? amount)（设计文档 5.4）。
+    /// 语义未知的流水不影响余额（读路径按「未知」处理）。
+    func balanceDeltaMinorUnits(for accountUUID: UUID) -> Int {
+        guard let kind else { return 0 }
+        let isSource = account?.uuid == accountUUID
+        let isTarget = targetAccount?.uuid == accountUUID
+        switch kind {
+        case .expense:
+            return isSource ? -(amountMinorUnits + feeMinorUnits) : 0
+        case .income:
+            return isSource ? amountMinorUnits - feeMinorUnits : 0
+        case .transfer:
+            var delta = 0
+            if isSource { delta -= amountMinorUnits + feeMinorUnits }
+            if isTarget { delta += targetAmountMinorUnits ?? amountMinorUnits }
+            return delta
+        }
+    }
+
     init(kind: TransactionKind, amountMinorUnits: Int, occurredAt: Date, ledgerID: UUID) {
         self.kindRawValue = kind.rawValue
         self.amountMinorUnits = amountMinorUnits
