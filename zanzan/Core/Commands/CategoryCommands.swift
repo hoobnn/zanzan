@@ -35,6 +35,42 @@ struct CategoryCommands {
         try context.save()
     }
 
+    func setArchived(uuid: UUID, isArchived: Bool) throws {
+        let category = try fetchActiveCategory(uuid)
+        category.isArchived = isArchived
+        category.updatedAt = .now
+        try context.save()
+    }
+
+    /// 软删：活跃流水引用或活跃子分类存在都阻断并引导归档（设计文档 §4）。
+    func softDeleteCategory(uuid: UUID) throws {
+        let category = try fetchActiveCategory(uuid)
+        let referenceCount = try context.fetchCount(
+            FetchDescriptor<StoredTransaction>(predicate: #Predicate {
+                !$0.isSoftDeleted && $0.category?.uuid == uuid
+            })
+        )
+        guard referenceCount == 0 else { throw CategoryCommandError.hasActiveTransactions }
+        guard try activeChildCount(of: uuid) == 0 else { throw CategoryCommandError.hasActiveChildren }
+        category.isSoftDeleted = true
+        category.updatedAt = .now
+        try context.save()
+    }
+
+    /// 恢复默认分类：对全部内置分类复位归档/软删标记（isBuiltIn 即识别机制，
+    /// 全库无硬删除故内置行永不缺失；用户改名/改图标不回滚）。
+    func restoreDefaultCategories() throws {
+        let builtIns = try context.fetch(
+            FetchDescriptor<StoredCategory>(predicate: #Predicate { $0.isBuiltIn })
+        )
+        for category in builtIns where category.isArchived || category.isSoftDeleted {
+            category.isArchived = false
+            category.isSoftDeleted = false
+            category.updatedAt = .now
+        }
+        try context.save()
+    }
+
     // MARK: - 私有
 
     /// 父分类校验：存在且活跃、自身是一级（禁三级）、方向一致；
