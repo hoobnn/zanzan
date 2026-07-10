@@ -11,7 +11,7 @@ struct CoreDomainSchemaTests {
 
         let originalID = UUID()
         let settlementID = UUID()
-        let link = StoredTransactionLink(
+        let link = TransactionLink(
             originalTransactionID: originalID,
             settlementTransactionID: settlementID,
             kind: .reimbursement,
@@ -20,7 +20,7 @@ struct CoreDomainSchemaTests {
         context.insert(link)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredTransactionLink>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<TransactionLink>()).first)
         #expect(fetched.originalTransactionID == originalID)
         #expect(fetched.settlementTransactionID == settlementID)
         #expect(fetched.kind == .reimbursement)
@@ -32,15 +32,15 @@ struct CoreDomainSchemaTests {
         let context = ModelContext(container)
 
         let ledgerID = UUID()
-        let template = StoredBudget(ledgerID: ledgerID, amountMinorUnits: 300_000)
-        let monthly = StoredBudget(ledgerID: ledgerID, amountMinorUnits: 500_000)
+        let template = Budget(ledgerID: ledgerID, amountMinorUnits: 300_000)
+        let monthly = Budget(ledgerID: ledgerID, amountMinorUnits: 500_000)
         monthly.periodYear = 2026
         monthly.periodMonth = 7
         context.insert(template)
         context.insert(monthly)
         try context.save()
 
-        let all = try context.fetch(FetchDescriptor<StoredBudget>())
+        let all = try context.fetch(FetchDescriptor<Budget>())
         #expect(all.count == 2)
         let fetchedTemplate = try #require(all.first { $0.periodYear == nil })
         #expect(fetchedTemplate.periodMonth == nil) // 与 periodYear 同空同有
@@ -52,11 +52,11 @@ struct CoreDomainSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let pool = StoredCreditPool(name: "招商银行", totalLimitMinorUnits: 10_000_000)
+        let pool = CreditPool(name: "招商银行", totalLimitMinorUnits: 10_000_000)
         context.insert(pool)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredCreditPool>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<CreditPool>()).first)
         #expect(fetched.name == "招商银行")
         #expect(fetched.totalLimitMinorUnits == 10_000_000)
         #expect(fetched.currencyCode == "CNY")

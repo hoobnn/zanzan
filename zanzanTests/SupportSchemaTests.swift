@@ -10,7 +10,7 @@ struct SupportSchemaTests {
         let context = ModelContext(container)
 
         let tagIDs = [UUID(), UUID()]
-        let rule = StoredRecurringRule(
+        let rule = RecurringRule(
             name: "房租",
             frequency: .monthly,
             startAt: .now,
@@ -23,7 +23,7 @@ struct SupportSchemaTests {
         context.insert(rule)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredRecurringRule>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<RecurringRule>()).first)
         #expect(fetched.frequency == .monthly)
         #expect(fetched.interval == 1)
         #expect(fetched.recurrenceDays == [1, 15, 31])
@@ -37,13 +37,13 @@ struct SupportSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let batch = StoredImportBatch(fileName: "alipay-2026-06.csv", importedAt: .now)
+        let batch = ImportBatch(fileName: "alipay-2026-06.csv", importedAt: .now)
         batch.contentHash = "abc123"
         batch.transactionCount = 42
         context.insert(batch)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredImportBatch>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<ImportBatch>()).first)
         #expect(fetched.fileName == "alipay-2026-06.csv")
         #expect(fetched.contentHash == "abc123")
         #expect(fetched.transactionCount == 42)
@@ -54,14 +54,14 @@ struct SupportSchemaTests {
         let context = ModelContext(container)
 
         let accountID = UUID()
-        let snapshot = StoredBalanceSnapshot(
+        let snapshot = BalanceSnapshot(
             accountID: accountID, snapshotAt: .now, balanceMinorUnits: 123_456
         )
         snapshot.fxRateToBase = Decimal(string: "7.18")
         context.insert(snapshot)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredBalanceSnapshot>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<BalanceSnapshot>()).first)
         #expect(fetched.accountID == accountID)
         #expect(fetched.balanceMinorUnits == 123_456)
         #expect(fetched.fxRateToBase == Decimal(string: "7.18"))
@@ -71,15 +71,15 @@ struct SupportSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        context.insert(StoredAuditLog(action: "accountDelete", detail: "招行卡"))
-        context.insert(StoredMeta(key: "schemaVersion", value: "1.0.0"))
+        context.insert(AuditLog(action: "accountDelete", detail: "招行卡"))
+        context.insert(AppMeta(key: "schemaVersion", value: "1.0.0"))
         try context.save()
 
-        let log = try #require(try context.fetch(FetchDescriptor<StoredAuditLog>()).first)
+        let log = try #require(try context.fetch(FetchDescriptor<AuditLog>()).first)
         #expect(log.action == "accountDelete")
         #expect(log.detail == "招行卡")
 
-        let meta = try #require(try context.fetch(FetchDescriptor<StoredMeta>()).first)
+        let meta = try #require(try context.fetch(FetchDescriptor<AppMeta>()).first)
         #expect(meta.key == "schemaVersion")
         #expect(meta.value == "1.0.0")
     }

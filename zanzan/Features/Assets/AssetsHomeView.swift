@@ -4,21 +4,21 @@ import SwiftUI
 /// 资产 Tab 首页：净资产总览 + 借入借出 + 按大类分组的账户列表（钱迹风格）。
 struct AssetsHomeView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<StoredAccount> { !$0.isSoftDeleted }, sort: \StoredAccount.sortOrder)
-    private var accounts: [StoredAccount]
+    @Query(filter: #Predicate<Account> { !$0.isSoftDeleted }, sort: \Account.sortOrder)
+    private var accounts: [Account]
     /// ponytail: 仅作余额失效信号——余额在投影内派生，流水变动时借它触发重算。
-    @Query(filter: #Predicate<StoredTransaction> { !$0.isSoftDeleted })
-    private var transactions: [StoredTransaction]
+    @Query(filter: #Predicate<Transaction> { !$0.isSoftDeleted })
+    private var transactions: [Transaction]
 
     @AppStorage("hidesAssetAmounts") private var hidesAmounts = false
     @State private var collapsedKinds: Set<AccountKind> = []
     @State private var isAddingAccount = false
-    @State private var editingAccount: StoredAccount?
+    @State private var editingAccount: Account?
     @State private var isShowingManagement = false
 
     private var overview: AssetsOverview {
         _ = (accounts.count, transactions.count) // 声明对两组数据的依赖
-        return (try? AssetsOverviewProjector(context: modelContext).overview())
+        return (try? AssetsOverviewProvider(context: modelContext).overview())
             ?? AssetsOverview(groups: [], totalAssetsMinorUnits: 0, totalLiabilitiesMinorUnits: 0,
                               borrowedTotalMinorUnits: 0, lentTotalMinorUnits: 0)
     }
@@ -58,12 +58,12 @@ struct AssetsHomeView: View {
         }
         .sheet(isPresented: $isAddingAccount) {
             AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
-                try AccountCommands(context: modelContext).createAccount(draft)
+                try AccountService(context: modelContext).createAccount(draft)
             }
         }
         .sheet(item: $editingAccount) { account in
             AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
-                try AccountCommands(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
+                try AccountService(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
             }
         }
     }

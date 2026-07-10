@@ -31,7 +31,7 @@ struct CategoryDraft {
 
 extension CategoryDraft {
     /// 编辑表单回填。
-    init(category: StoredCategory) {
+    init(category: Category) {
         self.init()
         name = category.name
         kind = category.kind ?? .expense

@@ -4,14 +4,14 @@ import SwiftUI
 /// 账户管理：按大类分组 + 已归档折叠区；余额行内派生。
 struct AccountsListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<StoredAccount> { !$0.isSoftDeleted }, sort: \StoredAccount.sortOrder)
-    private var accounts: [StoredAccount]
+    @Query(filter: #Predicate<Account> { !$0.isSoftDeleted }, sort: \Account.sortOrder)
+    private var accounts: [Account]
 
     @State private var isAddingAccount = false
-    @State private var editingAccount: StoredAccount?
+    @State private var editingAccount: Account?
     @State private var commandErrorMessage: String?
 
-    private var groups: [(kind: AccountKind, accounts: [StoredAccount])] {
+    private var groups: [(kind: AccountKind, accounts: [Account])] {
         let active = accounts.filter { !$0.isArchived }
         return AccountKind.allCases.compactMap { kind in
             let items = active.filter { $0.kind == kind }
@@ -19,7 +19,7 @@ struct AccountsListView: View {
         }
     }
 
-    private var archivedAccounts: [StoredAccount] { accounts.filter(\.isArchived) }
+    private var archivedAccounts: [Account] { accounts.filter(\.isArchived) }
 
     var body: some View {
         List {
@@ -51,12 +51,12 @@ struct AccountsListView: View {
         }
         .sheet(isPresented: $isAddingAccount) {
             AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
-                try AccountCommands(context: modelContext).createAccount(draft)
+                try AccountService(context: modelContext).createAccount(draft)
             }
         }
         .sheet(item: $editingAccount) { account in
             AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
-                try AccountCommands(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
+                try AccountService(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
             }
         }
         .alert("操作失败", isPresented: isPresentingError) {
@@ -66,7 +66,7 @@ struct AccountsListView: View {
         }
     }
 
-    private func row(for account: StoredAccount) -> some View {
+    private func row(for account: Account) -> some View {
         Button {
             editingAccount = account
         } label: {
@@ -88,19 +88,19 @@ struct AccountsListView: View {
         .tint(.primary)
         .swipeActions(edge: .trailing) {
             Button("删除", systemImage: "trash", role: .destructive) {
-                run { try AccountCommands(context: modelContext).softDeleteAccount(uuid: account.uuid) }
+                run { try AccountService(context: modelContext).softDeleteAccount(uuid: account.uuid) }
             }
             Button(account.isArchived ? String(localized: "取消归档") : String(localized: "归档"),
                    systemImage: account.isArchived ? "tray.and.arrow.up" : "archivebox") {
-                run { try AccountCommands(context: modelContext).setArchived(uuid: account.uuid, isArchived: !account.isArchived) }
+                run { try AccountService(context: modelContext).setArchived(uuid: account.uuid, isArchived: !account.isArchived) }
             }
         }
     }
 
     /// ponytail: 每行一次全量求和，账户/流水量级上来再走快照缓存。
     /// 读路径自愈：投影失败回落期初余额展示，不 crash。
-    private func balanceMinorUnits(of account: StoredAccount) -> Int {
-        (try? AccountBalanceProjector(context: modelContext).balanceMinorUnits(of: account))
+    private func balanceMinorUnits(of account: Account) -> Int {
+        (try? AccountBalanceProvider(context: modelContext).balanceMinorUnits(of: account))
             ?? account.initialBalanceMinorUnits
     }
 

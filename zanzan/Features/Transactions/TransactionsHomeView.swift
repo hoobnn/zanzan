@@ -4,13 +4,13 @@ import SwiftUI
 /// 账本 Tab 首页：解析当前账本（默认账本归一化）后转交账本页主体；
 /// 账本管理与「我的」入口收进工具栏。
 struct TransactionsHomeView: View {
-    @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
-    private var ledgers: [StoredLedger]
+    @Query(filter: #Predicate<Ledger> { !$0.isSoftDeleted }, sort: \Ledger.sortOrder)
+    private var ledgers: [Ledger]
 
     @State private var monthAnchor: Date = .now
 
     /// 默认账本归一化（设计文档 §4 同步合并兜底样板）：优先 isDefault，违例时回落首本。
-    private var currentLedger: StoredLedger? {
+    private var currentLedger: Ledger? {
         ledgers.first(where: \.isDefault) ?? ledgers.first
     }
 

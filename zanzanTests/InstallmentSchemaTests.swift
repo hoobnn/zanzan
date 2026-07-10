@@ -9,7 +9,7 @@ struct InstallmentSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let plan = StoredInstallmentPlan(
+        let plan = InstallmentPlan(
             name: "iPhone 24 期",
             kind: .purchase,
             accountID: UUID(),
@@ -22,7 +22,7 @@ struct InstallmentSchemaTests {
         context.insert(plan)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredInstallmentPlan>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<InstallmentPlan>()).first)
         #expect(fetched.kind == .purchase)
         #expect(fetched.amortizationKind == .flatFee)
         #expect(fetched.status == .active)
@@ -37,7 +37,7 @@ struct InstallmentSchemaTests {
         let context = ModelContext(container)
 
         let planID = UUID()
-        let period = StoredInstallmentPeriod(
+        let period = InstallmentPeriod(
             planID: planID,
             periodIndex: 1,
             dueAt: .now,
@@ -47,7 +47,7 @@ struct InstallmentSchemaTests {
         context.insert(period)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredInstallmentPeriod>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<InstallmentPeriod>()).first)
         #expect(fetched.planID == planID)
         #expect(fetched.periodIndex == 1)
         #expect(fetched.status == .pending)
@@ -61,18 +61,18 @@ struct InstallmentSchemaTests {
 
         let planID = UUID()
         for index in 1...3 {
-            context.insert(StoredInstallmentPeriod(
+            context.insert(InstallmentPeriod(
                 planID: planID, periodIndex: index, dueAt: .now,
                 principalMinorUnits: 100, interestMinorUnits: 0
             ))
         }
-        context.insert(StoredInstallmentPeriod(
+        context.insert(InstallmentPeriod(
             planID: UUID(), periodIndex: 1, dueAt: .now,
             principalMinorUnits: 100, interestMinorUnits: 0
         ))
         try context.save()
 
-        let descriptor = FetchDescriptor<StoredInstallmentPeriod>(
+        let descriptor = FetchDescriptor<InstallmentPeriod>(
             predicate: #Predicate { $0.planID == planID },
             sortBy: [SortDescriptor(\.periodIndex)]
         )

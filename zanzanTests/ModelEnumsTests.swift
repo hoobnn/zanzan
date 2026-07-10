@@ -25,9 +25,9 @@ struct ModelEnumsTests {
     }
 
     @Test func 图标描述符Kind三种能力() {
-        #expect(StoredIconDescriptor.Kind(rawValue: "symbol") == .symbol)
-        #expect(StoredIconDescriptor.Kind(rawValue: "asset") == .asset)
-        #expect(StoredIconDescriptor.Kind(rawValue: "emoji") == .emoji)
-        #expect(StoredIconDescriptor.Kind(rawValue: "sticker") == nil)
+        #expect(IconDescriptor.Kind(rawValue: "symbol") == .symbol)
+        #expect(IconDescriptor.Kind(rawValue: "asset") == .asset)
+        #expect(IconDescriptor.Kind(rawValue: "emoji") == .emoji)
+        #expect(IconDescriptor.Kind(rawValue: "sticker") == nil)
     }
 }

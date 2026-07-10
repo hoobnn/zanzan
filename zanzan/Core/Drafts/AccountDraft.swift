@@ -63,7 +63,7 @@ struct AccountDraft {
 
 extension AccountDraft {
     /// 编辑表单回填（账户管理页/资产页共用）。
-    init(account: StoredAccount) {
+    init(account: Account) {
         self.init()
         name = account.name
         subtitle = account.subtitle

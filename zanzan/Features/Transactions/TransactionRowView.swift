@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 流水行：彩色圆底图标 + 标题/时间 + 金额/账户；报销单附状态标签。
 struct TransactionRowView: View {
-    let transaction: StoredTransaction
+    let transaction: Transaction
 
     var body: some View {
         HStack(spacing: 12) {

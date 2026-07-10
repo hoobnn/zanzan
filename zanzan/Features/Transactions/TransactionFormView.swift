@@ -15,18 +15,18 @@ struct TransactionFormView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query(
-        filter: #Predicate<StoredAccount> { !$0.isSoftDeleted && !$0.isArchived && $0.isSelectableForRecord },
-        sort: \StoredAccount.sortOrder
+        filter: #Predicate<Account> { !$0.isSoftDeleted && !$0.isArchived && $0.isSelectableForRecord },
+        sort: \Account.sortOrder
     )
-    private var accounts: [StoredAccount]
+    private var accounts: [Account]
 
     @Query(
-        filter: #Predicate<StoredCategory> { !$0.isSoftDeleted && !$0.isArchived },
-        sort: \StoredCategory.sortOrder
+        filter: #Predicate<Category> { !$0.isSoftDeleted && !$0.isArchived },
+        sort: \Category.sortOrder
     )
-    private var categories: [StoredCategory]
+    private var categories: [Category]
 
-    init(ledgerID: UUID, editing transaction: StoredTransaction? = nil) {
+    init(ledgerID: UUID, editing transaction: Transaction? = nil) {
         self.ledgerID = ledgerID
         self.editingUUID = transaction?.uuid
         self.isKindLocked = transaction != nil
@@ -142,7 +142,7 @@ struct TransactionFormView: View {
     // MARK: - 分类宫格
 
     /// 当前方向一级分类；二级分类选择是后续切片（C2），角标仅提示有子分类。
-    private var parentCategories: [StoredCategory] {
+    private var parentCategories: [Category] {
         categories.filter { $0.kind == draft.kind && $0.parentID == nil }
     }
 
@@ -159,7 +159,7 @@ struct TransactionFormView: View {
         .scrollIndicators(.hidden)
     }
 
-    private func categoryCell(_ category: StoredCategory) -> some View {
+    private func categoryCell(_ category: Category) -> some View {
         let isSelected = draft.categoryUUID == category.uuid
         return Button {
             draft.categoryUUID = category.uuid
@@ -192,7 +192,7 @@ struct TransactionFormView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func hasChildren(_ category: StoredCategory) -> Bool {
+    private func hasChildren(_ category: Category) -> Bool {
         categories.contains { $0.parentID == category.uuid }
     }
 
@@ -296,7 +296,7 @@ struct TransactionFormView: View {
     private func save(andContinue: Bool) {
         draft.amountString = expression.finalizedDecimalString()
         do {
-            let commands = TransactionCommands(context: modelContext)
+            let commands = TransactionService(context: modelContext)
             if let editingUUID {
                 try commands.updateTransaction(uuid: editingUUID, draft: draft)
                 dismiss()

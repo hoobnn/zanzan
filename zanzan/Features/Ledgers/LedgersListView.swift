@@ -1,14 +1,14 @@
 import SwiftData
 import SwiftUI
 
-/// 账本 Tab 首页（也被「我的 → 账本管理」复用）。静态谓词 @Query；写操作全走 LedgerCommands。
+/// 账本 Tab 首页（也被「我的 → 账本管理」复用）。静态谓词 @Query；写操作全走 LedgerService。
 struct LedgersListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
-    private var ledgers: [StoredLedger]
+    @Query(filter: #Predicate<Ledger> { !$0.isSoftDeleted }, sort: \Ledger.sortOrder)
+    private var ledgers: [Ledger]
 
     @State private var isAddingLedger = false
-    @State private var editingLedger: StoredLedger?
+    @State private var editingLedger: Ledger?
     @State private var commandErrorMessage: String?
 
     var body: some View {
@@ -28,11 +28,11 @@ struct LedgersListView: View {
                 .tint(.primary)
                 .swipeActions(edge: .trailing) {
                     Button("删除", systemImage: "trash", role: .destructive) {
-                        run { try LedgerCommands(context: modelContext).softDeleteLedger(uuid: ledger.uuid) }
+                        run { try LedgerService(context: modelContext).softDeleteLedger(uuid: ledger.uuid) }
                     }
                     if !ledger.isDefault {
                         Button("设为默认", systemImage: "checkmark.circle") {
-                            run { try LedgerCommands(context: modelContext).setDefaultLedger(uuid: ledger.uuid) }
+                            run { try LedgerService(context: modelContext).setDefaultLedger(uuid: ledger.uuid) }
                         }
                     }
                 }
@@ -46,12 +46,12 @@ struct LedgersListView: View {
         }
         .sheet(isPresented: $isAddingLedger) {
             LedgerFormView(title: String(localized: "新建账本"), draft: LedgerDraft()) { draft in
-                try LedgerCommands(context: modelContext).createLedger(draft)
+                try LedgerService(context: modelContext).createLedger(draft)
             }
         }
         .sheet(item: $editingLedger) { ledger in
             LedgerFormView(title: String(localized: "编辑账本"), draft: LedgerDraft(name: ledger.name, colorID: ledger.colorID)) { draft in
-                try LedgerCommands(context: modelContext).updateLedger(uuid: ledger.uuid, draft: draft)
+                try LedgerService(context: modelContext).updateLedger(uuid: ledger.uuid, draft: draft)
             }
         }
         .alert("操作失败", isPresented: isPresentingError) {

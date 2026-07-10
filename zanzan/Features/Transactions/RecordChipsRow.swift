@@ -3,7 +3,7 @@ import SwiftUI
 
 /// 记账页功能胶囊行：账户选择可用；报销/优惠/图片/标签/设置为占位（后续切片接功能）。
 struct RecordChipsRow: View {
-    let accounts: [StoredAccount]
+    let accounts: [Account]
     @Binding var selectedAccountUUID: UUID?
 
     var body: some View {

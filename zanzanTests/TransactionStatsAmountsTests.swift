@@ -4,8 +4,8 @@ import Testing
 
 @MainActor
 struct TransactionStatsAmountsTests {
-    private func makeTransaction(kind: TransactionKind, amount: Int, fee: Int = 0) -> StoredTransaction {
-        let tx = StoredTransaction(kind: kind, amountMinorUnits: amount, occurredAt: .now, ledgerID: UUID())
+    private func makeTransaction(kind: TransactionKind, amount: Int, fee: Int = 0) -> Transaction {
+        let tx = Transaction(kind: kind, amountMinorUnits: amount, occurredAt: .now, ledgerID: UUID())
         tx.feeMinorUnits = fee
         return tx
     }

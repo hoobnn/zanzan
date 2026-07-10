@@ -9,11 +9,11 @@ struct SchemaV1Tests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let ledger = StoredLedger(name: "日常")
+        let ledger = Ledger(name: "日常")
         context.insert(ledger)
         try context.save()
 
-        let fetched = try context.fetch(FetchDescriptor<StoredLedger>())
+        let fetched = try context.fetch(FetchDescriptor<Ledger>())
         #expect(fetched.count == 1)
         #expect(fetched.first?.name == "日常")
         #expect(fetched.first?.isDefault == false)

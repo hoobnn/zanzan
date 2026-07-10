@@ -7,21 +7,21 @@ enum SchemaV1: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            StoredLedger.self,
-            StoredAccount.self,
-            StoredCategory.self,
-            StoredTransaction.self,
-            StoredTag.self,
-            StoredTransactionLink.self,
-            StoredBudget.self,
-            StoredCreditPool.self,
-            StoredInstallmentPlan.self,
-            StoredInstallmentPeriod.self,
-            StoredRecurringRule.self,
-            StoredImportBatch.self,
-            StoredBalanceSnapshot.self,
-            StoredAuditLog.self,
-            StoredMeta.self,
+            Ledger.self,
+            Account.self,
+            Category.self,
+            Transaction.self,
+            Tag.self,
+            TransactionLink.self,
+            Budget.self,
+            CreditPool.self,
+            InstallmentPlan.self,
+            InstallmentPeriod.self,
+            RecurringRule.self,
+            ImportBatch.self,
+            BalanceSnapshot.self,
+            AuditLog.self,
+            AppMeta.self,
         ]
     }
 }

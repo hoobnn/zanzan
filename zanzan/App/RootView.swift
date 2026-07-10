@@ -30,7 +30,7 @@ struct RootView: View {
             isRecording = true
         }
         .fullScreenCover(isPresented: $isRecording) {
-            RecordEntryCover()
+            RecordEntryView()
         }
     }
 }

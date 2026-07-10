@@ -5,11 +5,11 @@ import SwiftUI
 /// 谓词下推命中复合索引（isSoftDeleted, ledgerID, occurredAt），收窄到账本 × 月窗口。
 struct TransactionListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var transactions: [StoredTransaction]
+    @Query private var transactions: [Transaction]
 
     private let ledgerID: UUID
     @Binding private var monthAnchor: Date
-    @State private var editingTransaction: StoredTransaction?
+    @State private var editingTransaction: Transaction?
     @State private var commandErrorMessage: String?
     @State private var collapsedDays: Set<Date> = []
 
@@ -21,15 +21,15 @@ struct TransactionListView: View {
         let monthStart = interval?.start ?? .distantPast
         let monthEnd = interval?.end ?? .distantFuture
         _transactions = Query(
-            filter: #Predicate<StoredTransaction> {
+            filter: #Predicate<Transaction> {
                 !$0.isSoftDeleted && $0.ledgerID == id
                     && $0.occurredAt >= monthStart && $0.occurredAt < monthEnd
             },
-            sort: [SortDescriptor(\StoredTransaction.occurredAt, order: .reverse)]
+            sort: [SortDescriptor(\Transaction.occurredAt, order: .reverse)]
         )
     }
 
-    private var dayGroups: [(day: Date, items: [StoredTransaction])] {
+    private var dayGroups: [(day: Date, items: [Transaction])] {
         Dictionary(grouping: transactions) { Calendar.current.startOfDay(for: $0.occurredAt) }
             .sorted { $0.key > $1.key }
             .map { (day: $0.key, items: $0.value) }
@@ -127,7 +127,7 @@ struct TransactionListView: View {
 
     // MARK: - 按日分组
 
-    private func daySection(_ group: (day: Date, items: [StoredTransaction])) -> some View {
+    private func daySection(_ group: (day: Date, items: [Transaction])) -> some View {
         Section {
             if !collapsedDays.contains(group.day) {
                 ForEach(group.items) { transaction in
@@ -149,7 +149,7 @@ struct TransactionListView: View {
         }
     }
 
-    private func dayHeader(_ group: (day: Date, items: [StoredTransaction])) -> some View {
+    private func dayHeader(_ group: (day: Date, items: [Transaction])) -> some View {
         Button {
             withAnimation {
                 if !collapsedDays.insert(group.day).inserted {
@@ -184,7 +184,7 @@ struct TransactionListView: View {
         return formatter
     }()
 
-    private func daySummary(_ items: [StoredTransaction]) -> String {
+    private func daySummary(_ items: [Transaction]) -> String {
         let expense = items.reduce(0) { $0 + $1.statsExpenseMinorUnits }
         let income = items.reduce(0) { $0 + $1.statsIncomeMinorUnits }
         var parts: [String] = []
@@ -193,9 +193,9 @@ struct TransactionListView: View {
         return parts.joined(separator: "  ")
     }
 
-    private func delete(_ transaction: StoredTransaction) {
+    private func delete(_ transaction: Transaction) {
         do {
-            try TransactionCommands(context: modelContext).softDeleteTransaction(uuid: transaction.uuid)
+            try TransactionService(context: modelContext).softDeleteTransaction(uuid: transaction.uuid)
         } catch {
             commandErrorMessage = error.localizedDescription
         }

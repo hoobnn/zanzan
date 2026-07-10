@@ -9,15 +9,15 @@ struct DefaultDataSeederTests {
         let context = ModelContext(try AppModelContainer.make(inMemory: true))
         try DefaultDataSeeder(context: context).seedIfNeeded()
 
-        let ledgers = try context.fetch(FetchDescriptor<StoredLedger>())
+        let ledgers = try context.fetch(FetchDescriptor<Ledger>())
         #expect(ledgers.count == 1)
         #expect(ledgers.first?.isDefault == true)
 
-        let accounts = try context.fetch(FetchDescriptor<StoredAccount>())
+        let accounts = try context.fetch(FetchDescriptor<Account>())
         #expect(accounts.count == 1)
         #expect(accounts.first?.kind == .fund)
 
-        let categories = try context.fetch(FetchDescriptor<StoredCategory>())
+        let categories = try context.fetch(FetchDescriptor<Category>())
         let allBuiltIn = categories.allSatisfy(\.isBuiltIn)
         let allGlobal = categories.allSatisfy { $0.ledgerID == nil }
         #expect(allBuiltIn)
@@ -36,14 +36,14 @@ struct DefaultDataSeederTests {
         let context = ModelContext(try AppModelContainer.make(inMemory: true))
         let seeder = DefaultDataSeeder(context: context)
         try seeder.seedIfNeeded()
-        let firstCount = try context.fetch(FetchDescriptor<StoredCategory>()).count
+        let firstCount = try context.fetch(FetchDescriptor<Category>()).count
         try seeder.seedIfNeeded()
-        let secondCount = try context.fetch(FetchDescriptor<StoredCategory>()).count
-        let ledgerCount = try context.fetch(FetchDescriptor<StoredLedger>()).count
+        let secondCount = try context.fetch(FetchDescriptor<Category>()).count
+        let ledgerCount = try context.fetch(FetchDescriptor<Ledger>()).count
         #expect(secondCount == firstCount)
         #expect(ledgerCount == 1)
         let key = DefaultDataSeeder.completionKey
-        let metas = try context.fetch(FetchDescriptor<StoredMeta>(predicate: #Predicate { $0.key == key }))
+        let metas = try context.fetch(FetchDescriptor<AppMeta>(predicate: #Predicate { $0.key == key }))
         #expect(metas.count == 1)
     }
 }

@@ -9,16 +9,16 @@ struct TransactionClusterSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let ledger = StoredLedger(name: "日常")
-        let account = StoredAccount(name: "招行储蓄卡", kind: .fund)
-        let category = StoredCategory(name: "餐饮", kind: .expense, sortOrder: 0)
-        let tag = StoredTag(name: "出差")
+        let ledger = Ledger(name: "日常")
+        let account = Account(name: "招行储蓄卡", kind: .fund)
+        let category = Category(name: "餐饮", kind: .expense, sortOrder: 0)
+        let tag = Tag(name: "出差")
         context.insert(ledger)
         context.insert(account)
         context.insert(category)
         context.insert(tag)
 
-        let txn = StoredTransaction(
+        let txn = Transaction(
             kind: .expense, amountMinorUnits: 2500,
             occurredAt: .now, ledgerID: ledger.uuid
         )
@@ -28,7 +28,7 @@ struct TransactionClusterSchemaTests {
         context.insert(txn)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredTransaction>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<Transaction>()).first)
         #expect(fetched.kind == .expense)
         #expect(fetched.account?.name == "招行储蓄卡")
         #expect(fetched.category?.name == "餐饮")
@@ -47,12 +47,12 @@ struct TransactionClusterSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let source = StoredAccount(name: "招行卡", kind: .fund)
-        let target = StoredAccount(name: "美元账户", kind: .fund)
+        let source = Account(name: "招行卡", kind: .fund)
+        let target = Account(name: "美元账户", kind: .fund)
         context.insert(source)
         context.insert(target)
 
-        let txn = StoredTransaction(
+        let txn = Transaction(
             kind: .transfer, amountMinorUnits: 72000,
             occurredAt: .now, ledgerID: UUID()
         )
@@ -63,7 +63,7 @@ struct TransactionClusterSchemaTests {
         context.insert(txn)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredTransaction>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<Transaction>()).first)
         #expect(fetched.targetAccount?.name == "美元账户")
         #expect(fetched.targetAmountMinorUnits == 10000)
         #expect(fetched.fxRateToBase == Decimal(string: "7.2"))
@@ -75,7 +75,7 @@ struct TransactionClusterSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let txn = StoredTransaction(
+        let txn = Transaction(
             kind: .expense, amountMinorUnits: 100,
             occurredAt: .now, ledgerID: UUID()
         )
@@ -83,7 +83,7 @@ struct TransactionClusterSchemaTests {
         context.insert(txn)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredTransaction>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<Transaction>()).first)
         #expect(fetched.kind == nil)
         #expect(fetched.kindRawValue == "cryptoStaking")
         #expect(fetched.reimbursementStatus == nil) // 空串 = 非报销
@@ -94,14 +94,14 @@ struct TransactionClusterSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let card = StoredAccount(name: "招行信用卡", kind: .credit)
+        let card = Account(name: "招行信用卡", kind: .credit)
         card.creditLimitMinorUnits = 5_000_000
         card.statementDay = 5
         card.paymentDueDay = 23
         context.insert(card)
         try context.save()
 
-        let fetched = try #require(try context.fetch(FetchDescriptor<StoredAccount>()).first)
+        let fetched = try #require(try context.fetch(FetchDescriptor<Account>()).first)
         #expect(fetched.kind == .credit)
         #expect(fetched.creditLimitMinorUnits == 5_000_000)
         #expect(fetched.creditPoolID == nil)
@@ -115,14 +115,14 @@ struct TransactionClusterSchemaTests {
         let container = try AppModelContainer.make(inMemory: true)
         let context = ModelContext(container)
 
-        let parent = StoredCategory(name: "餐饮", kind: .expense, sortOrder: 0)
-        let child = StoredCategory(name: "早餐", kind: .expense, sortOrder: 0)
+        let parent = Category(name: "餐饮", kind: .expense, sortOrder: 0)
+        let child = Category(name: "早餐", kind: .expense, sortOrder: 0)
         child.parentID = parent.uuid
         context.insert(parent)
         context.insert(child)
         try context.save()
 
-        let all = try context.fetch(FetchDescriptor<StoredCategory>())
+        let all = try context.fetch(FetchDescriptor<Category>())
         let fetchedChild = try #require(all.first { $0.name == "早餐" })
         #expect(fetchedChild.parentID == parent.uuid)
         #expect(fetchedChild.ledgerID == nil) // nil = 全局分类
