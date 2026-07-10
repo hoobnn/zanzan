@@ -17,6 +17,7 @@ struct MonthlyStats {
         var totalMinorUnits: Int { directMinorUnits + children.reduce(0) { $0 + $1.amountMinorUnits } }
     }
 
+    /// 各金额均为本位币分（口径①：外币按流水自身汇率快照折算）
     let incomeTotalMinorUnits: Int
     /// 含 fee（fee 恒为流出计入支出统计）
     let expenseTotalMinorUnits: Int
@@ -47,10 +48,10 @@ struct MonthlyStatsProvider {
         return MonthlyStats(
             incomeTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsIncomeMinorUnits },
             expenseTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsExpenseMinorUnits },
-            feeTotalMinorUnits: transactions.reduce(0) { $0 + $1.feeMinorUnits },
+            feeTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsFeeMinorUnits },
             expenseRanking: ranking(
                 of: transactions, kind: .expense, adjustments: try refundAdjustments(in: transactions)
-            ) { $0.amountMinorUnits },
+            ) { $0.statsBaseMinorUnits($0.amountMinorUnits) }, // 折算后 amount（fee 无分类不进排行）
             incomeRanking: ranking(of: transactions, kind: .income) { $0.statsIncomeMinorUnits }
         )
     }
@@ -59,6 +60,7 @@ struct MonthlyStatsProvider {
 
     /// 退款到账冲减对应分类支出（5.4 统计口径）：经 TransactionLink 反查原单分类，
     /// 冲减额记入退款到账的当月（与 statsExpenseMinorUnits 的总额口径同月生效）。
+    /// 分摊额以原单币种计（5.5），故按**原单**自身汇率快照折本位币（口径①）。
     private func refundAdjustments(
         in transactions: [Transaction]
     ) throws -> [(category: Category, amountMinorUnits: Int)] {
@@ -73,8 +75,8 @@ struct MonthlyStatsProvider {
                 let original = try context.fetch(FetchDescriptor<Transaction>(
                     predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == originalID }
                 )).first
-                guard let category = original?.category else { continue } // 原单已删/脏数据：只冲总额不进排行
-                adjustments.append((category, -link.amountMinorUnits))
+                guard let original, let category = original.category else { continue } // 原单已删/脏数据：只冲总额不进排行
+                adjustments.append((category, -original.statsBaseMinorUnits(link.amountMinorUnits)))
             }
         }
         return adjustments

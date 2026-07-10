@@ -182,6 +182,44 @@ struct BudgetProgressProviderTests {
         #expect(result.categories.map(\.usedMinorUnits) == [5_000, 1_000])
     }
 
+    // MARK: - 折算口径③（预算金额本位币计，已用额继承口径①折算）
+
+    /// 直接改模型标外币（并行代理正在加 Draft 外币字段，测试不依赖在途 API）
+    private func markForeign(_ tx: Transaction, rate: String) throws {
+        tx.currencyCode = "USD"
+        tx.fxRateToBase = Decimal(string: rate)!
+        try tx.modelContext?.save()
+    }
+
+    @Test func 预算已用含外币流水按快照折算() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try makeBudget(env, amount: 100_000) // 本位币计，无需折算
+        try record(env, amount: "30", categoryUUID: food.uuid, day: 1) // CNY 3_000 分
+        let usd = try record(env, amount: "100", categoryUUID: food.uuid, day: 2)
+        try markForeign(usd, rate: "7.2") // USD 10_000 分 → 72_000 分
+
+        let result = try progress(env)
+        #expect(result.total!.usedMinorUnits == 75_000)
+        #expect(result.total!.remainingMinorUnits == 25_000)
+    }
+
+    @Test func 分类预算外币手续费扣减口径自洽() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try makeBudget(env, amount: 100_000)
+        try makeBudget(env, categoryID: food.uuid, amount: 80_000)
+        let usd = try record(env, amount: "100", categoryUUID: food.uuid, day: 1)
+        usd.feeMinorUnits = 500
+        try markForeign(usd, rate: "7.2")
+
+        let result = try progress(env)
+        // 总预算含折算后 fee：(10_000 + 500) × 7.2
+        #expect(result.total!.usedMinorUnits == 75_600)
+        // 分类预算剔除 fee 后恰为折算后 amount：10_000 × 7.2
+        #expect(result.categories.first!.usedMinorUnits == 72_000)
+    }
+
     @Test func 无效月份被拒() throws {
         let env = try makeEnv()
         #expect(throws: BudgetProgressError.self) {

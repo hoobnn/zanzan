@@ -21,7 +21,8 @@ struct MonthlyBudgetProgress {
     let categories: [BudgetProgress]
 }
 
-/// 预算进度只读投影（设计文档 5.7）：
+/// 预算进度只读投影（设计文档 5.7）：预算金额一律本位币计（§4 折算口径③），
+/// 已用额走 statsExpenseMinorUnits 自动继承口径①折算（外币按自身汇率快照折本位币）。
 /// 总预算已用 = 当月支出合计（statsExpenseMinorUnits 口径，fee 恒为流出一并计入）；
 /// 分类预算已用 = 该一级分类含全部子类的支出 rollup（fee 无分类归属，不进分类口径）。
 /// 剔除软删流水、isExcludedFromBudget 与已报销（settled）支出。
@@ -54,8 +55,9 @@ struct BudgetProgressProvider {
         let totalUsed = transactions.reduce(0) { $0 + $1.statsExpenseMinorUnits }
         var usedByParent: [UUID: Int] = [:]
         for tx in transactions where tx.kind == .expense {
-            // fee 无分类归属，不进分类预算；isExcludedFromStats 经 statsExpenseMinorUnits 归零后被 guard 剔除
-            let value = tx.statsExpenseMinorUnits - tx.feeMinorUnits
+            // fee 无分类归属，不进分类预算；扣减用折算后 statsFeeMinorUnits 与 statsExpense 同口径，
+            // 差值恰为折算后 amount；isExcludedFromStats 两侧同归零后被 guard 剔除
+            let value = tx.statsExpenseMinorUnits - tx.statsFeeMinorUnits
             guard value > 0, let category = tx.category else { continue }
             usedByParent[category.parentID ?? category.uuid, default: 0] += value
         }

@@ -120,6 +120,100 @@ struct MonthlyStatsProviderTests {
         #expect(stats.expenseRanking.isEmpty)
     }
 
+    // MARK: - 折算口径①（外币按自身汇率快照折本位币，历史口径永固）
+
+    /// 直接改模型标外币（并行代理正在加 Draft 外币字段，测试不依赖在途 API）
+    private func markForeign(_ tx: Transaction, currency: String = "USD", rate: String) throws {
+        tx.currencyCode = currency
+        tx.fxRateToBase = Decimal(string: rate)!
+        try tx.modelContext?.save()
+    }
+
+    @Test func 同月混币汇总按各自快照折本位币() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5) // CNY 10_000 分
+        let usd = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 6)
+        try markForeign(usd, rate: "7.2") // USD 10_000 分 → 72_000 分
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 82_000)
+        let foodStat = stats.expenseRanking.first { $0.category.uuid == food.uuid }!
+        #expect(foodStat.totalMinorUnits == 82_000) // 排行同口径，无双重折算
+    }
+
+    @Test func 历史口径永固后记新汇率不改旧月统计() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        let july = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5)
+        try markForeign(july, rate: "7.2")
+
+        let before = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(before.expenseTotalMinorUnits == 72_000)
+
+        // 8 月记入新汇率流水（全库最近快照变为 7.5），7 月统计仍按自身快照 7.2
+        let august = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 1, month: 8)
+        try markForeign(august, rate: "7.5")
+        let after = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(after.expenseTotalMinorUnits == 72_000)
+    }
+
+    @Test func 外币退款冲减按原单快照折算() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        let original = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5)
+        try markForeign(original, rate: "7.2") // USD 10_000 分 → 72_000 分
+
+        // 退款到账单 + 分摊行直接构造（分摊额以原单币种计，5.5）
+        let settlement = Transaction(
+            kind: .income, amountMinorUnits: 5_000,
+            occurredAt: Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 10))!,
+            ledgerID: env.ledgerID
+        )
+        settlement.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        settlement.currencyCode = "USD"
+        settlement.fxRateToBase = Decimal(string: "7.2")!
+        env.context.insert(settlement)
+        env.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: settlement.uuid,
+            kind: .refund,
+            amountMinorUnits: 5_000
+        ))
+        try env.context.save()
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 36_000) // 72_000 − 5_000×7.2
+        #expect(stats.incomeTotalMinorUnits == 0) // 退款到账不计收入
+        let foodStat = stats.expenseRanking.first { $0.category.uuid == food.uuid }!
+        #expect(foodStat.totalMinorUnits == 36_000) // 分类冲减与总额同口径
+    }
+
+    @Test func 外币转账手续费折算计入fee口径() throws {
+        let env = try makeEnv()
+        var targetDraft = AccountDraft()
+        targetDraft.name = "美元卡"
+        let target = try AccountService(context: env.context).createAccount(targetDraft)
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "1000"
+        draft.feeString = "5"
+        draft.accountUUID = env.accountUUID
+        draft.targetAccountUUID = target.uuid
+        draft.occurredAt = Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 8))!
+        let transfer = try TransactionService(context: env.context).recordTransaction(draft, ledgerID: env.ledgerID)
+        try markForeign(transfer, rate: "7.2")
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 3_600) // 500 × 7.2
+        #expect(stats.feeTotalMinorUnits == 3_600)
+    }
+
     @Test func 收入排行独立于支出() throws {
         let env = try makeEnv()
         let salary = try makeCategory(env, name: "工资", kind: .income)
