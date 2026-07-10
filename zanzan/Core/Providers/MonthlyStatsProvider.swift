@@ -48,18 +48,45 @@ struct MonthlyStatsProvider {
             incomeTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsIncomeMinorUnits },
             expenseTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsExpenseMinorUnits },
             feeTotalMinorUnits: transactions.reduce(0) { $0 + $1.feeMinorUnits },
-            expenseRanking: ranking(of: transactions, kind: .expense) { $0.amountMinorUnits },
+            expenseRanking: ranking(
+                of: transactions, kind: .expense, adjustments: try refundAdjustments(in: transactions)
+            ) { $0.amountMinorUnits },
             incomeRanking: ranking(of: transactions, kind: .income) { $0.statsIncomeMinorUnits }
         )
     }
 
     // MARK: - 私有
 
+    /// 退款到账冲减对应分类支出（5.4 统计口径）：经 TransactionLink 反查原单分类，
+    /// 冲减额记入退款到账的当月（与 statsExpenseMinorUnits 的总额口径同月生效）。
+    private func refundAdjustments(
+        in transactions: [Transaction]
+    ) throws -> [(category: Category, amountMinorUnits: Int)] {
+        var adjustments: [(category: Category, amountMinorUnits: Int)] = []
+        for tx in transactions where tx.kind == .income && tx.settlementKind == .refund {
+            let settlementID = tx.uuid
+            let links = try context.fetch(FetchDescriptor<TransactionLink>(
+                predicate: #Predicate { !$0.isSoftDeleted && $0.settlementTransactionID == settlementID }
+            ))
+            for link in links {
+                let originalID = link.originalTransactionID
+                let original = try context.fetch(FetchDescriptor<Transaction>(
+                    predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == originalID }
+                )).first
+                guard let category = original?.category else { continue } // 原单已删/脏数据：只冲总额不进排行
+                adjustments.append((category, -link.amountMinorUnits))
+            }
+        }
+        return adjustments
+    }
+
     /// 分类 rollup：二级金额汇入父类。amount 闭包区分口径——
-    /// 支出排行计 amount（fee 无分类不进排行），收入排行计报销剔除后口径。
+    /// 支出排行计 amount（fee 无分类不进排行），收入排行计报销剔除后口径；
+    /// adjustments 为退款冲减项（负值），随同分类汇总。
     private func ranking(
         of transactions: [Transaction],
         kind: TransactionKind,
+        adjustments: [(category: Category, amountMinorUnits: Int)] = [],
         amount: (Transaction) -> Int
     ) -> [MonthlyStats.CategoryStat] {
         var directByParent: [UUID: Int] = [:]
@@ -67,10 +94,7 @@ struct MonthlyStatsProvider {
         var categoriesByUUID: [UUID: Category] = [:]
         var parentUUIDOfChild: [UUID: UUID] = [:]
 
-        for tx in transactions where tx.kind == kind {
-            guard let category = tx.category else { continue } // 脏数据防御：计 total 不进排行
-            let value = amount(tx)
-            guard value > 0 else { continue }
+        func accumulate(_ category: Category, _ value: Int) {
             categoriesByUUID[category.uuid] = category
             if let parentID = category.parentID,
                let parent = categoriesByUUID[parentID] ?? fetchCategory(parentID) {
@@ -80,6 +104,16 @@ struct MonthlyStatsProvider {
             } else {
                 directByParent[category.uuid, default: 0] += value
             }
+        }
+
+        for tx in transactions where tx.kind == kind {
+            guard let category = tx.category else { continue } // 脏数据防御：计 total 不进排行
+            let value = amount(tx)
+            guard value > 0 else { continue }
+            accumulate(category, value)
+        }
+        for adjustment in adjustments {
+            accumulate(adjustment.category, adjustment.amountMinorUnits)
         }
 
         var childrenByParent: [UUID: [MonthlyStats.ChildStat]] = [:]

@@ -32,6 +32,21 @@ struct TransactionStatsAmountsTests {
         let tx = makeTransaction(kind: .income, amount: 3_000)
         tx.settlementKindRawValue = TransactionLinkKind.reimbursement.rawValue
         #expect(tx.statsIncomeMinorUnits == 0)
+        #expect(tx.statsExpenseMinorUnits == 0) // 报销到账不冲减支出（垫付支出照常计入）
+    }
+
+    @Test func 退款到账冲减支出不计收入() {
+        let tx = makeTransaction(kind: .income, amount: 3_000)
+        tx.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        #expect(tx.statsIncomeMinorUnits == 0)
+        #expect(tx.statsExpenseMinorUnits == -3_000) // 冲减支出而非计收入
+    }
+
+    @Test func 不计统计的退款到账不冲减() {
+        let tx = makeTransaction(kind: .income, amount: 3_000)
+        tx.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        tx.isExcludedFromStats = true
+        #expect(tx.statsExpenseMinorUnits == 0)
     }
 
     @Test func 不计统计流水两侧归零() {
