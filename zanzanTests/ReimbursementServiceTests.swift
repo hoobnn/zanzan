@@ -135,6 +135,50 @@ struct ReimbursementServiceTests {
         #expect(tx.reimbursementStatus == .settled)
     }
 
+    @Test func 手动结案后补分摊不回退settled() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        try settle(f, amount: 6_000, allocations: [(tx, 6_000)])
+        try f.service.settleManually(transactionUUID: tx.uuid) // 实报少于垫付结案
+        #expect(tx.reimbursementStatus == .settled)
+
+        // 再补一笔仍不满额的到账：新增分摊只升级，手动结案决定不被静默推翻
+        try settle(f, amount: 2_000, allocations: [(tx, 2_000)])
+        #expect(tx.reimbursementStatus == .settled)
+        #expect(try activeLinks(f).count == 2) // 分摊关联照常建立
+    }
+
+    @Test func 手动结案后移除分摊仍回退waiting() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 6_000, allocations: [(tx, 6_000)])
+        try f.service.settleManually(transactionUUID: tx.uuid)
+
+        // 移除方向保持现有降级逻辑（§4 解除关联回退明文）：覆盖不足回 waiting
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+        #expect(tx.reimbursementStatus == .waiting)
+    }
+
+    @Test func 手动结案后改大金额按移除方向降级waiting() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        try settle(f, amount: 6_000, allocations: [(tx, 6_000)])
+        try f.service.settleManually(transactionUUID: tx.uuid)
+
+        // 改大金额属「覆盖分母变化」：用户主动改单视同移除方向，允许降级（非静默推翻）
+        var draft = TransactionDraft()
+        draft.kind = .expense
+        draft.amountString = "150"
+        draft.accountUUID = f.cash.uuid
+        draft.categoryUUID = f.dining.uuid
+        try TransactionService(context: f.context).updateTransaction(uuid: tx.uuid, draft: draft)
+        #expect(tx.amountMinorUnits == 15_000)
+        #expect(tx.reimbursementStatus == .waiting) // 6_000 < 15_000 覆盖不足
+    }
+
     // MARK: - 登记报销打款
 
     @Test func 全额报销建关联并置settled() throws {

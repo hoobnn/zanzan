@@ -337,6 +337,85 @@ struct InstallmentServiceTests {
         }
     }
 
+    // MARK: - 撤销提前结清
+
+    @Test func 撤销提前结清恢复结清前状态与进度闭环() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        let periodTx = try service.settlePeriod(
+            planUUID: plan.uuid, periodIndex: 1, fromAccountID: f.cash.uuid, at: date(2026, 8, 10)
+        )
+        let settleTx = try service.settleEarly(
+            planUUID: plan.uuid, fromAccountID: f.cash.uuid, penaltyMinorUnits: 500, at: date(2026, 8, 20)
+        )
+
+        try service.undoSettleEarly(planUUID: plan.uuid, at: date(2026, 8, 21))
+        #expect(settleTx.isSoftDeleted) // 结清转账软删（可撤销），非硬删
+        #expect(!periodTx.isSoftDeleted) // 已 settled 期流水为历史事实，不动
+        #expect(plan.status == .active)
+        #expect(plan.closedAt == nil)
+        let rows = try periods(of: plan, in: f.context)
+        #expect(rows.map(\.status) == [.settled, .pending, .pending]) // cancelled 全回 pending
+
+        // 进度闭环恢复：已还 + 剩余 == 计划总本金，提前结清覆盖清零
+        let progress = try InstallmentPlanProvider(context: f.context).progress(planUUID: plan.uuid)
+        #expect(progress.settledPrincipalMinorUnits == 3_333)
+        #expect(progress.earlySettledPrincipalMinorUnits == 0)
+        #expect(progress.remainingPrincipalMinorUnits == 6_667)
+        #expect(progress.paidPrincipalMinorUnits + progress.remainingPrincipalMinorUnits == 10_000)
+    }
+
+    @Test func 撤销提前结清后可继续记期() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        _ = try service.settleEarly(planUUID: plan.uuid, fromAccountID: f.cash.uuid, at: date(2026, 8, 20))
+        try service.undoSettleEarly(planUUID: plan.uuid, at: date(2026, 8, 21))
+
+        let tx = try service.settlePeriod(
+            planUUID: plan.uuid, periodIndex: 1, fromAccountID: f.cash.uuid, at: date(2026, 8, 22)
+        )
+        #expect(tx.amountMinorUnits == 3_333)
+        let period = try #require(try periods(of: plan, in: f.context).first)
+        #expect(period.status == .settled)
+        // 也可再次提前结清（撤销→再结清闭环）
+        let tx2 = try service.settleEarly(planUUID: plan.uuid, fromAccountID: f.cash.uuid, at: date(2026, 8, 23))
+        #expect(tx2.amountMinorUnits == 6_667)
+        #expect(plan.status == .settledEarly)
+    }
+
+    @Test func 双重撤销与active计划撤销结清均被拒() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        #expect(throws: InstallmentServiceError.planNotSettledEarly) {
+            try service.undoSettleEarly(planUUID: plan.uuid, at: self.date(2026, 8, 20)) // active 不可撤
+        }
+        _ = try service.settleEarly(planUUID: plan.uuid, fromAccountID: f.cash.uuid, at: date(2026, 8, 20))
+        try service.undoSettleEarly(planUUID: plan.uuid, at: date(2026, 8, 21))
+        #expect(throws: InstallmentServiceError.planNotSettledEarly) {
+            try service.undoSettleEarly(planUUID: plan.uuid, at: self.date(2026, 8, 22)) // 双重撤销
+        }
+    }
+
+    @Test func 结清流水已被软删时撤销结清仍解卡() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        let settleTx = try service.settleEarly(
+            planUUID: plan.uuid, fromAccountID: f.cash.uuid, at: date(2026, 8, 20)
+        )
+        // 模拟历史坏数据：结清流水被越权软删
+        settleTx.isSoftDeleted = true
+        try f.context.save()
+
+        try service.undoSettleEarly(planUUID: plan.uuid, at: date(2026, 8, 21))
+        #expect(plan.status == .active) // 不因流水缺失而卡死
+        let allPending = try periods(of: plan, in: f.context).allSatisfy { $0.status == .pending }
+        #expect(allPending)
+    }
+
     // MARK: - 撤销一期
 
     @Test func 撤销一期软删流水并回退期状态() throws {

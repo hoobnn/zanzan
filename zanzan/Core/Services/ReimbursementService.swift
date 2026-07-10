@@ -173,7 +173,7 @@ struct ReimbursementService {
             ))
         }
         for original in originals {
-            try recomputeOriginalStatus(original)
+            try upgradeOriginalStatusIfCovered(original)
         }
         try context.save()
         return settlement
@@ -234,7 +234,7 @@ struct ReimbursementService {
         }
         for originalID in restoredByOriginal.keys {
             if let original = try? fetchActiveTransaction(originalID) {
-                try recomputeOriginalStatus(original)
+                try upgradeOriginalStatusIfCovered(original)
             }
         }
         try context.save()
@@ -270,9 +270,25 @@ struct ReimbursementService {
         return tx.fxRateToBase ?? 1
     }
 
-    /// 按 Σ 分摊覆盖情况推进/回退原单状态：全额覆盖 → settled，否则 waiting。
-    /// 未标记垫付的原单（退款原单）不参与状态机。
-    /// internal：TransactionService.updateTransaction 改原单金额后复用同一套重算逻辑。
+    /// 状态重算按方向拆两个入口（schema 冻结、无「手动结案」标记位，用方向语义保住
+    /// settleManually 的决定）：
+    ///
+    /// 新增分摊方向（recordSettlement / restoreSettlement）：只升级。waiting 且覆盖满额
+    /// → settled；绝不把 settled 降回 waiting——settled 只可能来自满额覆盖或手动结案，
+    /// 新增分摊只会增加覆盖，两种来源都不应被静默推翻。
+    private func upgradeOriginalStatusIfCovered(_ original: Transaction) throws {
+        guard original.reimbursementStatus == .waiting else { return }
+        let allocated = try allocatedAmount(originalID: original.uuid)
+        guard allocated >= original.amountMinorUnits else { return }
+        original.reimbursementStatusRawValue = ReimbursementStatus.settled.rawValue
+        original.updatedAt = .now
+    }
+
+    /// 移除分摊方向（removeSettlement / removeLink）：按覆盖全量重算，满额 → settled、
+    /// 不足 → waiting——settled→waiting 的降级只允许出现在本入口（§4 解除关联回退明文）。
+    /// internal：TransactionService.updateTransaction 编辑原单后也走本入口——金额改大属
+    /// 「覆盖分母变化」，settled 且不满额时降级视同移除方向（用户主动改单、非静默推翻；
+    /// 代价是手动结案的原单被编辑后会回到 waiting，schema 无手动结案标记位，接受）。
     func recomputeOriginalStatus(_ original: Transaction) throws {
         guard original.reimbursementStatus != nil else { return }
         let allocated = try allocatedAmount(originalID: original.uuid)

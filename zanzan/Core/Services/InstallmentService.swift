@@ -136,6 +136,41 @@ struct InstallmentService {
         return tx
     }
 
+    /// 撤销提前结清（§4 撤销按相反方向执行）：软删结清转账、cancelled 期全部回 pending、
+    /// 计划回 active 并清空 closedAt。提前结清后终态锁在位、不可能再有新记期，
+    /// 撤销即回到结清前状态；已 settled 期为历史事实不受影响。
+    func undoSettleEarly(planUUID: UUID, at undoneAt: Date) throws {
+        let plan = try fetchPlan(planUUID, includeDeleted: false)
+        guard plan.status == .settledEarly else {
+            throw InstallmentServiceError.planNotSettledEarly
+        }
+
+        // 结清转账 = 计划来源流水中未被任何 settled 期回填引用的那笔
+        // （期供流水都记录在 period.settledTransactionID，结清转账无期行指回）；
+        // 参照 undoSettlePeriod 兜底写法：流水已删/缺失不卡死，仍回退状态解卡
+        let periods = try fetchPeriods(planUUID: planUUID)
+        let periodTxIDs = Set(periods.compactMap(\.settledTransactionID))
+        let installmentRaw = TransactionSourceKind.installment.rawValue
+        let planTransactions = try context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate {
+                !$0.isSoftDeleted && $0.sourceID == planUUID && $0.sourceKindRawValue == installmentRaw
+            }
+        ))
+        for tx in planTransactions where !periodTxIDs.contains(tx.uuid) {
+            tx.isSoftDeleted = true
+            tx.updatedAt = undoneAt
+        }
+
+        for period in periods where period.status == .cancelled {
+            period.statusRawValue = InstallmentPeriodStatus.pending.rawValue
+            period.updatedAt = undoneAt
+        }
+        plan.statusRawValue = InstallmentPlanStatus.active.rawValue
+        plan.closedAt = nil
+        plan.updatedAt = undoneAt
+        try context.save()
+    }
+
     // MARK: - 撤销一期
 
     /// 撤销一期：软删该期流水、期行回 pending；completed 计划随之回 active。
@@ -394,6 +429,7 @@ enum InstallmentServiceError: LocalizedError, Equatable {
     case periodNotFound
     case planClosed
     case planSettledEarlyLocked
+    case planNotSettledEarly
     case periodAlreadySettled
     case periodCancelled
     case periodStatusUnknown
@@ -413,6 +449,7 @@ enum InstallmentServiceError: LocalizedError, Equatable {
         case .periodNotFound: String(localized: "分期期数不存在")
         case .planClosed: String(localized: "计划已完结，不可再操作期数")
         case .planSettledEarlyLocked: String(localized: "计划已提前结清，已还期数不可撤销")
+        case .planNotSettledEarly: String(localized: "计划未提前结清，无可撤销的结清操作")
         case .periodAlreadySettled: String(localized: "该期已还款，不可重复记")
         case .periodCancelled: String(localized: "该期已随提前结清取消")
         case .periodStatusUnknown: String(localized: "该期状态无法识别，请升级应用后重试")
