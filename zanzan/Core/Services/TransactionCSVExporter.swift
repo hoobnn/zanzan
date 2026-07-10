@@ -103,25 +103,15 @@ enum TransactionCSV {
         return records
     }
 
-    /// 严格版金额解析（元串 → 分）：只接受 ASCII 数字与至多一个小数点。
-    /// 千分位逗号一律拒绝——`Decimal(string:)` 会在逗号处截断把 "1,234.56" 静默解析成 1，
-    /// 这是导入边界不可接受的静默错值；小数换算复用 `MoneyAmount`（Decimal 定点，不经 Double）。
+    /// 严格版金额解析（元串 → 分）：白名单/量级上限逻辑已下沉到 `MoneyAmount`（唯一实现），此处纯转发。
     static func minorUnits(fromCSVAmount string: String) -> Int? {
-        let trimmed = string.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty,
-              trimmed.allSatisfy({ ("0"..."9").contains($0) || $0 == "." }),
-              trimmed.filter({ $0 == "." }).count <= 1 else { return nil }
-        return MoneyAmount.minorUnits(fromDecimalString: trimmed)
+        MoneyAmount.minorUnits(fromDecimalString: string)
     }
 
-    /// 严格版汇率解析：只接受 ASCII 数字与至多一个小数点（拒逗号/科学计数法等静默错值），
+    /// 严格版汇率解析：复用 `MoneyAmount.strictDecimal`（拒逗号/科学计数法等静默错值），
     /// Decimal 定点不经 Double；汇率不是金额，小数位数不受两位限制
     static func decimal(fromCSVRate string: String) -> Decimal? {
-        let trimmed = string.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty,
-              trimmed.allSatisfy({ ("0"..."9").contains($0) || $0 == "." }),
-              trimmed.filter({ $0 == "." }).count <= 1 else { return nil }
-        return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX"))
+        MoneyAmount.strictDecimal(from: string)
     }
 }
 

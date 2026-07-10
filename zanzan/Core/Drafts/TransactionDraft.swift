@@ -52,7 +52,8 @@ struct TransactionDraft {
             let trimmedFee = feeString.trimmingCharacters(in: .whitespaces)
             var fee = 0
             if !trimmedFee.isEmpty {
-                guard let parsed = MoneyAmount.minorUnits(fromDecimalString: trimmedFee) else {
+                // fee ≥ 0 不变量：严格解析已拒负号/溢出环绕，此处显式兜底（CSV 注入负 fee = 造钱路径）
+                guard let parsed = MoneyAmount.minorUnits(fromDecimalString: trimmedFee), parsed >= 0 else {
                     throw TransactionDraftError.invalidFee
                 }
                 fee = parsed
@@ -65,11 +66,11 @@ struct TransactionDraft {
         }
     }
 
-    /// 汇率串 → Decimal（定点解析，与 MoneyAmount 同用 en_US locale，禁 Double）；须 > 0
+    /// 汇率串 → Decimal（`MoneyAmount.strictDecimal` 严格白名单解析，拒逗号/科学计数法，禁 Double）；须 > 0
     private func parsedFxRate() throws -> Decimal? {
         let trimmed = fxRateString.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        guard let rate = Decimal(string: trimmed, locale: Locale(identifier: "en_US")), rate > 0 else {
+        guard let rate = MoneyAmount.strictDecimal(from: trimmed), rate > 0 else {
             throw TransactionDraftError.invalidFxRate
         }
         return rate
