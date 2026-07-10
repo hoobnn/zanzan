@@ -124,11 +124,13 @@ struct RecurringRuleService {
         while due <= asOf {
             if let endAt = rule.endAt, due > endAt { break }
             if try !hasExistingOutput(ruleID: rule.uuid, occurredAt: due) {
+                // 来源包经参数随 recordTransaction 首个 save 原子落库：崩溃重放时
+                // 按 (sourceID, occurredAt) 去重必然命中，不再双记
                 let tx = try transactionService.recordTransaction(
-                    transactionDraft(from: rule, kind: kind, occurredAt: due), ledgerID: ledgerID
+                    transactionDraft(from: rule, kind: kind, occurredAt: due), ledgerID: ledgerID,
+                    source: (kind: .recurring, id: rule.uuid)
                 )
-                tx.sourceKindRawValue = TransactionSourceKind.recurring.rawValue
-                tx.sourceID = rule.uuid
+                // 标签挂接在下一次 save 才落盘：崩溃窗口内最坏丢标签，不破坏去重承诺（可接受残余）
                 if let tags = try activeTags(rule.templateTagIDs) { tx.tags = tags }
                 created.append(tx)
             }

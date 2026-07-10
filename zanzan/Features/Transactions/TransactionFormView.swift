@@ -11,6 +11,7 @@ struct TransactionFormView: View {
     @State private var expression: AmountExpression
     @State private var validationMessage: String?
     @State private var isPickingTime = false
+    @State private var isSaving = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -298,6 +299,9 @@ struct TransactionFormView: View {
     // MARK: - 保存
 
     private func save(andContinue: Bool) {
+        // 防重复提交：dismiss 动画期间连点保存会重复落库；成功关页不复位（页面将销毁）
+        guard !isSaving else { return }
+        isSaving = true
         draft.amountString = expression.finalizedDecimalString()
         do {
             let commands = TransactionService(context: modelContext)
@@ -311,11 +315,13 @@ struct TransactionFormView: View {
                 expression = AmountExpression()
                 draft.amountString = ""
                 draft.note = ""
+                isSaving = false // 保存再记：本笔已落库，放行下一笔
             } else {
                 dismiss()
             }
         } catch {
             validationMessage = error.localizedDescription
+            isSaving = false // 失败复位，允许改后重试
         }
     }
 

@@ -297,7 +297,7 @@ struct InstallmentService {
     // MARK: - 流水生成
 
     /// 期供/结清转账统一入口：经 TransactionService 走完整校验（不绕过直写 Transaction），
-    /// 落库后补记来源包（TransactionDraft 不承载 sourceKind）。
+    /// 来源包经参数随首个 save 原子落库（崩溃不留无来源的孤儿转账）。
     private func recordTransfer(
         amountMinorUnits: Int, feeMinorUnits: Int, fromAccountID: UUID,
         plan: InstallmentPlan, note: String, occurredAt: Date
@@ -319,10 +319,9 @@ struct InstallmentService {
         draft.note = note
         draft.accountUUID = fromAccountID
         draft.targetAccountUUID = plan.accountID
-        let tx = try TransactionService(context: context).recordTransaction(draft, ledgerID: plan.ledgerID)
-        tx.sourceKindRawValue = TransactionSourceKind.installment.rawValue
-        tx.sourceID = plan.uuid
-        return tx
+        return try TransactionService(context: context).recordTransaction(
+            draft, ledgerID: plan.ledgerID, source: (kind: .installment, id: plan.uuid)
+        )
     }
 
     // MARK: - 查询辅助

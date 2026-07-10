@@ -7,8 +7,8 @@ import SwiftData
 /// 系统边界，外部数据一律不可信：逐行校验（列数/类型/金额/日期/账户/分类），
 /// 错误带行号聚合上报。失败策略：**文档未规定行级跳过，取整批原子失败**——
 /// 任一行非法则整批不落库，用户改好文件重导，避免"导了一半"的对账噩梦。
-/// 落库逐笔走 `TransactionService` 完整校验，成功后打 `sourceKind = csvImport,
-/// sourceID = batch.uuid`，支持 `undoBatch` 整批软删撤销（幂等）。
+/// 落库逐笔走 `TransactionService` 完整校验，来源包 `sourceKind = csvImport,
+/// sourceID = batch.uuid` 随首个 save 原子落库，支持 `undoBatch` 整批软删撤销（幂等）。
 struct TransactionCSVImporter {
     let context: ModelContext
 
@@ -70,8 +70,8 @@ struct TransactionCSVImporter {
         // 第二遍：先落批次行并 save，再逐笔经 TransactionService 落库（服务层二次完整校验）。
         // 顺序即崩溃防线：中途崩溃时批次行已可查——undoBatch 可清理半批流水，
         // 撞哈希检测也能命中，不留 sourceID 悬空的孤儿批。
-        // recordTransaction 内部逐笔 save（TransactionService 非本切片可改），无法收敛为
-        // 批末一次事务 save；最坏崩溃窗口 = 末笔已 save 但 sourceID 赋值未随下一次 save 落盘。
+        // recordTransaction 内部逐笔 save，无法收敛为批末一次事务 save；
+        // 来源包经参数在每笔首个 save 前写入，半批流水均可被 undoBatch 按 sourceID 反查。
         let batch = ImportBatch(fileName: fileName, importedAt: importedAt)
         batch.contentHash = Self.contentHash(of: csv)
         context.insert(batch)
@@ -80,10 +80,9 @@ struct TransactionCSVImporter {
         var inserted: [Transaction] = []
         do {
             for row in validatedRows {
-                let tx = try service.recordTransaction(row.draft, ledgerID: ledgerID)
-                tx.sourceKindRawValue = TransactionSourceKind.csvImport.rawValue
-                tx.sourceID = batch.uuid
-                inserted.append(tx)
+                inserted.append(try service.recordTransaction(
+                    row.draft, ledgerID: ledgerID, source: (kind: .csvImport, id: batch.uuid)
+                ))
             }
         } catch {
             // 预校验后此处理论不可达；兜底把已写入的半批连同批次行清掉再抛

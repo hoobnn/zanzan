@@ -272,7 +272,8 @@ struct ReimbursementService {
 
     /// 按 Σ 分摊覆盖情况推进/回退原单状态：全额覆盖 → settled，否则 waiting。
     /// 未标记垫付的原单（退款原单）不参与状态机。
-    private func recomputeOriginalStatus(_ original: Transaction) throws {
+    /// internal：TransactionService.updateTransaction 改原单金额后复用同一套重算逻辑。
+    func recomputeOriginalStatus(_ original: Transaction) throws {
         guard original.reimbursementStatus != nil else { return }
         let allocated = try allocatedAmount(originalID: original.uuid)
         let status: ReimbursementStatus = allocated >= original.amountMinorUnits ? .settled : .waiting
@@ -280,8 +281,9 @@ struct ReimbursementService {
         original.updatedAt = .now
     }
 
-    /// 原单已报销/已退款额 = Σ 其活跃关联行金额（派生值不落库，5.5）
-    private func allocatedAmount(originalID: UUID) throws -> Int {
+    /// 原单已报销/已退款额 = Σ 其活跃关联行金额（派生值不落库，5.5）。
+    /// internal：TransactionService 的原单改额守卫复用同一口径。
+    func allocatedAmount(originalID: UUID) throws -> Int {
         let links = try context.fetch(FetchDescriptor<TransactionLink>(
             predicate: #Predicate { !$0.isSoftDeleted && $0.originalTransactionID == originalID }
         ))

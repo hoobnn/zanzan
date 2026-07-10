@@ -64,6 +64,24 @@ struct BalanceSnapshotService {
         )
     }
 
+    // MARK: - 失效级联（§5.13）
+
+    /// 软删受影响账户 `snapshotAt >= 时点` 的活跃快照。写路径动了历史（记/改/删/恢复流水、
+    /// 校准余额、改期初余额）即调用——快照正确性的前提是「时点之前的流水没变过」，
+    /// 宁可少快照不可留脏快照（§5.13 明文）。静态助手不 save：快照只是缓存，
+    /// 随调用方业务写一并提交即可，不要求同一事务原子（多删无害）。
+    static func invalidateSnapshots(accountUUIDs: Set<UUID>, onOrAfter date: Date, context: ModelContext) throws {
+        for accountID in accountUUIDs {
+            let snapshots = try context.fetch(FetchDescriptor<BalanceSnapshot>(
+                predicate: #Predicate { !$0.isSoftDeleted && $0.accountID == accountID && $0.snapshotAt >= date }
+            ))
+            for snapshot in snapshots {
+                snapshot.isSoftDeleted = true
+                snapshot.updatedAt = .now
+            }
+        }
+    }
+
     // MARK: - 私有
 
     /// 落/刷新一笔快照（不 save，由公开入口统一提交）。

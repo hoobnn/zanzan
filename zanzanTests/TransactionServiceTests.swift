@@ -299,6 +299,114 @@ struct TransactionServiceTests {
         }
     }
 
+    // MARK: - 报销涉链守卫（§5.5）
+
+    /// 垫付原单（25.50）+ 报销到账单（分摊 10.00）夹具
+    private func makeReimbursedPair(_ f: Fixture) throws -> (original: Transaction, settlement: Transaction) {
+        let original = try TransactionService(context: f.context)
+            .recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        let reimbursement = ReimbursementService(context: f.context)
+        try reimbursement.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try reimbursement.recordSettlement(
+            kind: .reimbursement, amountMinorUnits: 1_000, occurredAt: .now,
+            accountUUID: f.cash.uuid, ledgerID: f.ledger.uuid,
+            allocations: [.init(originalTransactionUUID: original.uuid, amountMinorUnits: 1_000)]
+        )
+        return (original, settlement)
+    }
+
+    @Test func 到账单禁止通用删改恢复() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let (_, settlement) = try makeReimbursedPair(f)
+
+        #expect(throws: TransactionServiceError.self) {
+            try commands.softDeleteTransaction(uuid: settlement.uuid)
+        }
+        #expect(!settlement.isSoftDeleted) // 阻断生效
+        var incomeDraft = TransactionDraft()
+        incomeDraft.kind = .income
+        incomeDraft.amountString = "50"
+        incomeDraft.accountUUID = f.cash.uuid
+        incomeDraft.categoryUUID = f.salary.uuid
+        #expect(throws: TransactionServiceError.self) {
+            try commands.updateTransaction(uuid: settlement.uuid, draft: incomeDraft)
+        }
+        // 恢复走 ReimbursementService.restoreSettlement，通用撤销入口阻断
+        try ReimbursementService(context: f.context).removeSettlement(transactionUUID: settlement.uuid)
+        #expect(settlement.isSoftDeleted)
+        #expect(throws: TransactionServiceError.self) {
+            try commands.undoSoftDeleteTransaction(uuid: settlement.uuid)
+        }
+        #expect(settlement.isSoftDeleted)
+    }
+
+    @Test func 原单有活跃分摊禁止删除_解除后放行() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let (original, settlement) = try makeReimbursedPair(f)
+
+        #expect(throws: TransactionServiceError.self) {
+            try commands.softDeleteTransaction(uuid: original.uuid)
+        }
+        #expect(!original.isSoftDeleted)
+        // 解除关联（软删到账单级联软删关联行）后原单可删
+        try ReimbursementService(context: f.context).removeSettlement(transactionUUID: settlement.uuid)
+        try commands.softDeleteTransaction(uuid: original.uuid)
+        #expect(original.isSoftDeleted)
+    }
+
+    @Test func 原单改额低于分摊阻断_覆盖规则重算状态() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let (original, _) = try makeReimbursedPair(f) // 2550 分，已分摊 1000 分
+
+        #expect(throws: TransactionServiceError.self) {
+            try commands.updateTransaction(uuid: original.uuid, draft: self.expenseDraft(f, amount: "9.99"))
+        }
+        #expect(original.amountMinorUnits == 2_550) // 阻断且未被半改
+
+        // 改到恰等于 Σ 分摊：放行，分摊全额覆盖 → settled
+        try commands.updateTransaction(uuid: original.uuid, draft: expenseDraft(f, amount: "10"))
+        #expect(original.amountMinorUnits == 1_000)
+        #expect(original.reimbursementStatus == .settled)
+
+        // 再改大：覆盖不足回退 waiting
+        try commands.updateTransaction(uuid: original.uuid, draft: expenseDraft(f, amount: "20"))
+        #expect(original.reimbursementStatus == .waiting)
+    }
+
+    @Test func 恢复流水引用已删账户被阻断() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        try commands.softDeleteTransaction(uuid: tx.uuid)
+        f.cash.isSoftDeleted = true
+        try f.context.save()
+
+        #expect(throws: TransactionServiceError.self) {
+            try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
+        }
+        #expect(tx.isSoftDeleted) // 阻断生效：不产生挂在已删账户上的活跃流水
+
+        f.cash.isSoftDeleted = false
+        try f.context.save()
+        try commands.undoSoftDeleteTransaction(uuid: tx.uuid) // 先恢复账户后放行
+        #expect(!tx.isSoftDeleted)
+    }
+
+    // MARK: - 来源包原子落库
+
+    @Test func 来源包随记账参数落库() throws {
+        let f = try makeFixture()
+        let batchID = UUID()
+        let tx = try TransactionService(context: f.context).recordTransaction(
+            expenseDraft(f), ledgerID: f.ledger.uuid, source: (kind: .csvImport, id: batchID)
+        )
+        #expect(tx.sourceKind == .csvImport)
+        #expect(tx.sourceID == batchID)
+    }
+
     @Test func 编辑不换币种保留历史汇率快照() throws {
         let f = try makeFixture()
         let usd = try makeUSDAccount(f)

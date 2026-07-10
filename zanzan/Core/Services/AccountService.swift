@@ -22,6 +22,7 @@ struct AccountService {
     func updateAccount(uuid: UUID, draft: AccountDraft) throws {
         let v = try draft.validated()
         let account = try fetchActiveAccount(uuid)
+        let isInitialBalanceChanged = v.initialBalanceMinorUnits != account.initialBalanceMinorUnits
         // 已有流水（含软删，恢复后口径仍须一致）禁改币种——历史流水币种语义不可漂移
         if v.currencyCode != account.currencyCode {
             // 池内成员卡改币种会破坏「成员币种与池一致」不变量（§5.8），须先解绑
@@ -38,6 +39,12 @@ struct AccountService {
         account.kindRawValue = v.kind.rawValue
         apply(v, to: account)
         account.updatedAt = .now
+        if isInitialBalanceChanged {
+            // §5.13 失效级联：快照值 = 期初 + 增量，期初变了任意时点的快照都脏，全部失效
+            try BalanceSnapshotService.invalidateSnapshots(
+                accountUUIDs: [uuid], onOrAfter: .distantPast, context: context
+            )
+        }
         try context.save()
     }
 
@@ -103,6 +110,10 @@ struct AccountService {
         tx.sourceKindRawValue = TransactionSourceKind.adjustment.rawValue
         tx.isExcludedFromStats = true
         context.insert(tx)
+        // §5.13 失效级联：校准流水改变了 occurredAt 起的余额轨迹，该时点起的快照失效
+        try BalanceSnapshotService.invalidateSnapshots(
+            accountUUIDs: [account.uuid], onOrAfter: occurredAt, context: context
+        )
         try context.save()
         return tx
     }

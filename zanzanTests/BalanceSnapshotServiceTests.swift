@@ -168,6 +168,111 @@ struct BalanceSnapshotServiceTests {
         #expect(snapshot.balanceMinorUnits == 14_400)
     }
 
+    // MARK: - 失效级联（§5.13 写路径挂接）
+
+    /// 走服务写路径的夹具：账本 + 支出分类 + 现金账户（期初 10000）
+    private func makeServiceFixture(context: ModelContext) throws -> (ledger: Ledger, cash: Account, dining: Category) {
+        let ledger = try LedgerService(context: context).createLedger(LedgerDraft(name: "日常"))
+        let cash = Account(name: "现金", kind: .fund)
+        cash.initialBalanceMinorUnits = 10_000
+        let dining = Category(name: "餐饮", kind: .expense, sortOrder: 0)
+        context.insert(cash)
+        context.insert(dining)
+        try context.save()
+        return (ledger, cash, dining)
+    }
+
+    private func expenseDraft(account: Account, category: Category, occurredAt: Date) -> TransactionDraft {
+        var draft = TransactionDraft()
+        draft.kind = .expense
+        draft.amountString = "10"
+        draft.occurredAt = occurredAt
+        draft.accountUUID = account.uuid
+        draft.categoryUUID = category.uuid
+        return draft
+    }
+
+    @Test func 记早于快照的流水使快照失效_晚于则保留() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (ledger, cash, dining) = try makeServiceFixture(context: context)
+        try BalanceSnapshotService(context: context).generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+        let service = TransactionService(context: context)
+
+        _ = try service.recordTransaction(
+            expenseDraft(account: cash, category: dining, occurredAt: Self.at(6)), ledgerID: ledger.uuid
+        )
+        #expect(try activeSnapshots(of: cash.uuid, in: context).count == 1) // 晚于快照时点，保留
+
+        _ = try service.recordTransaction(
+            expenseDraft(account: cash, category: dining, occurredAt: Self.at(1)), ledgerID: ledger.uuid
+        )
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty) // 早于快照时点，失效
+    }
+
+    @Test func 编辑流水按新旧时点较早者失效快照() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (ledger, cash, dining) = try makeServiceFixture(context: context)
+        let service = TransactionService(context: context)
+        let tx = try service.recordTransaction(
+            expenseDraft(account: cash, category: dining, occurredAt: Self.at(6)), ledgerID: ledger.uuid
+        )
+        try BalanceSnapshotService(context: context).generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+
+        // 把流水从 t+6 挪到 t+2：min(旧, 新) = t+2 < 快照时点 t+4 → 失效
+        try service.updateTransaction(
+            uuid: tx.uuid, draft: expenseDraft(account: cash, category: dining, occurredAt: Self.at(2))
+        )
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty)
+    }
+
+    @Test func 软删与恢复流水使时点后快照失效() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (ledger, cash, dining) = try makeServiceFixture(context: context)
+        let service = TransactionService(context: context)
+        let snapshotService = BalanceSnapshotService(context: context)
+        let tx = try service.recordTransaction(
+            expenseDraft(account: cash, category: dining, occurredAt: Self.at(1)), ledgerID: ledger.uuid
+        )
+
+        try snapshotService.generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+        try service.softDeleteTransaction(uuid: tx.uuid)
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty)
+
+        try snapshotService.generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+        try service.undoSoftDeleteTransaction(uuid: tx.uuid)
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty)
+    }
+
+    @Test func 校准余额使时点后快照失效() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (_, cash, _) = try makeServiceFixture(context: context)
+        try BalanceSnapshotService(context: context).generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+
+        let adjustment = try AccountService(context: context).calibrateBalance(
+            accountUUID: cash.uuid, actualBalanceMinorUnits: 20_000, occurredAt: Self.at(2)
+        )
+        #expect(adjustment != nil)
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty)
+    }
+
+    @Test func 改期初余额使全部快照失效() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (_, cash, _) = try makeServiceFixture(context: context)
+        let snapshotService = BalanceSnapshotService(context: context)
+        try snapshotService.generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(1))
+        try snapshotService.generateSnapshot(accountUUID: cash.uuid, asOf: Self.at(4))
+
+        // 不改期初：快照保留
+        var draft = AccountDraft(account: cash)
+        try AccountService(context: context).updateAccount(uuid: cash.uuid, draft: draft)
+        #expect(try activeSnapshots(of: cash.uuid, in: context).count == 2)
+
+        // 改期初：快照值 = 期初 + 增量，任意时点全脏 → 全部失效
+        draft.initialBalanceString = "88"
+        try AccountService(context: context).updateAccount(uuid: cash.uuid, draft: draft)
+        #expect(try activeSnapshots(of: cash.uuid, in: context).isEmpty)
+    }
+
     @Test func 一致性校验_无快照时视为一致() throws {
         let context = ModelContext(try AppModelContainer.make(inMemory: true))
         let (cash, _) = try makeFixture(context: context)

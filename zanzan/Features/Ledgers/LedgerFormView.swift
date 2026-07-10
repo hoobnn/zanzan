@@ -8,6 +8,7 @@ struct LedgerFormView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var validationMessage: String?
+    @State private var isSaving = false
 
     var body: some View {
         NavigationStack {
@@ -31,11 +32,15 @@ struct LedgerFormView: View {
     }
 
     private func save() {
+        // 防重复提交：dismiss 动画期间连点保存会重复落库；成功关页不复位（页面将销毁）
+        guard !isSaving else { return }
+        isSaving = true
         do {
             try onSave(draft)
             dismiss()
         } catch {
             validationMessage = error.localizedDescription
+            isSaving = false // 失败复位，允许改后重试
         }
     }
 }
