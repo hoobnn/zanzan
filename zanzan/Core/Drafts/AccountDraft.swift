@@ -5,6 +5,8 @@ struct AccountDraft {
     var name: String = ""
     var subtitle: String = ""
     var kind: AccountKind = .fund
+    /// 币种代码（ISO 4217，三位大写字母）；归一化大写
+    var currencyCode: String = "CNY"
     var initialBalanceString: String = "0"
     var creditLimitString: String = ""
     var statementDay: Int? = nil
@@ -16,6 +18,7 @@ struct AccountDraft {
         let name: String
         let subtitle: String
         let kind: AccountKind
+        let currencyCode: String
         let initialBalanceMinorUnits: Int
         let creditLimitMinorUnits: Int?
         let statementDay: Int?
@@ -27,6 +30,11 @@ struct AccountDraft {
     func validated() throws -> Validated {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw AccountDraftError.emptyName }
+        // ISO 4217 格式校验：归一化大写后须为三位大写字母
+        let currencyCode = currencyCode.trimmingCharacters(in: .whitespaces).uppercased()
+        guard currencyCode.count == 3, currencyCode.allSatisfy({ ("A"..."Z").contains($0) }) else {
+            throw AccountDraftError.invalidCurrencyCode
+        }
         guard let initialBalance = MoneyAmount.signedMinorUnits(fromDecimalString: initialBalanceString) else {
             throw AccountDraftError.invalidInitialBalance
         }
@@ -51,6 +59,7 @@ struct AccountDraft {
             name: name,
             subtitle: subtitle.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: kind,
+            currencyCode: currencyCode,
             initialBalanceMinorUnits: initialBalance,
             creditLimitMinorUnits: creditLimit,
             statementDay: statementDay,
@@ -68,6 +77,7 @@ extension AccountDraft {
         name = account.name
         subtitle = account.subtitle
         kind = account.kind ?? .fund
+        currencyCode = account.currencyCode
         initialBalanceString = MoneyAmount.decimalString(fromMinorUnits: account.initialBalanceMinorUnits)
         creditLimitString = account.creditLimitMinorUnits.map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
         statementDay = account.statementDay
@@ -79,6 +89,7 @@ extension AccountDraft {
 
 enum AccountDraftError: LocalizedError {
     case emptyName
+    case invalidCurrencyCode
     case invalidInitialBalance
     case invalidCreditLimit
     case invalidDayOfMonth
@@ -86,6 +97,7 @@ enum AccountDraftError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "账户名不能为空")
+        case .invalidCurrencyCode: String(localized: "币种代码须为 3 位大写字母（ISO 4217）")
         case .invalidInitialBalance: String(localized: "期初余额格式不正确")
         case .invalidCreditLimit: String(localized: "信用额度格式不正确")
         case .invalidDayOfMonth: String(localized: "账单日/还款日须在 1–28 之间")

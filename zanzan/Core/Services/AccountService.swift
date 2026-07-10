@@ -22,6 +22,15 @@ struct AccountService {
     func updateAccount(uuid: UUID, draft: AccountDraft) throws {
         let v = try draft.validated()
         let account = try fetchActiveAccount(uuid)
+        // 已有流水（含软删，恢复后口径仍须一致）禁改币种——历史流水币种语义不可漂移
+        if v.currencyCode != account.currencyCode {
+            let referenceCount = try context.fetchCount(
+                FetchDescriptor<Transaction>(predicate: #Predicate {
+                    $0.account?.uuid == uuid || $0.targetAccount?.uuid == uuid
+                })
+            )
+            guard referenceCount == 0 else { throw AccountServiceError.currencyImmutable }
+        }
         account.kindRawValue = v.kind.rawValue
         apply(v, to: account)
         account.updatedAt = .now
@@ -58,10 +67,23 @@ struct AccountService {
 
     /// 校准到实际余额（设计文档 5.2）：按与派生余额的差额生成一笔 `adjustment` 收支流水，
     /// 默认不计收支统计；差额为 0 不生成。理财账户市值更新走同一入口。
+    /// 外币账户按 §5.4 规则带 `fxRateToBase`：显式入参优先，否则取最近流水快照，两者皆无抛错。
     @discardableResult
-    func calibrateBalance(accountUUID: UUID, actualBalanceMinorUnits: Int, occurredAt: Date = .now) throws -> Transaction? {
+    func calibrateBalance(
+        accountUUID: UUID,
+        actualBalanceMinorUnits: Int,
+        occurredAt: Date = .now,
+        fxRateToBase: Decimal? = nil
+    ) throws -> Transaction? {
         let account = try fetchActiveAccount(accountUUID)
         guard !account.isArchived else { throw AccountServiceError.accountArchived }
+        // 先解析汇率再建流水，避免抛错前污染上下文
+        var resolvedRate: Decimal? = nil
+        if account.currencyCode != FxConversion.baseCurrencyCode {
+            let rate = try fxRateToBase ?? FxRateProvider(context: context).rate(for: account.currencyCode)
+            guard let rate, rate > 0 else { throw AccountServiceError.missingFxRate }
+            resolvedRate = rate
+        }
         let currentBalance = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
         let delta = actualBalanceMinorUnits - currentBalance
         guard delta != 0 else { return nil }
@@ -72,7 +94,8 @@ struct AccountService {
             ledgerID: try fetchDefaultLedgerID()
         )
         tx.account = account
-        tx.currencyCode = account.currencyCode // MVP 全 CNY；fxRateToBase 恒 nil
+        tx.currencyCode = account.currencyCode
+        tx.fxRateToBase = resolvedRate // 本位币恒 nil，外币恒非空（§5.4）
         tx.sourceKindRawValue = TransactionSourceKind.adjustment.rawValue
         tx.isExcludedFromStats = true
         context.insert(tx)
@@ -83,6 +106,7 @@ struct AccountService {
     private func apply(_ v: AccountDraft.Validated, to account: Account) {
         account.name = v.name
         account.subtitle = v.subtitle
+        account.currencyCode = v.currencyCode
         account.initialBalanceMinorUnits = v.initialBalanceMinorUnits
         account.creditLimitMinorUnits = v.creditLimitMinorUnits
         account.statementDay = v.statementDay
@@ -118,6 +142,8 @@ enum AccountServiceError: LocalizedError {
     case accountArchived
     case hasActiveTransactions
     case noLedgerAvailable
+    case currencyImmutable
+    case missingFxRate
 
     var errorDescription: String? {
         switch self {
@@ -125,6 +151,8 @@ enum AccountServiceError: LocalizedError {
         case .accountArchived: String(localized: "账户已归档，恢复后才能校准余额")
         case .hasActiveTransactions: String(localized: "账户名下还有流水，无法删除；可先归档或转移流水")
         case .noLedgerAvailable: String(localized: "没有可用账本，无法生成校准流水")
+        case .currencyImmutable: String(localized: "账户已有流水，币种不可修改")
+        case .missingFxRate: String(localized: "该币种暂无汇率快照，请提供汇率或先记一笔带汇率的流水")
         }
     }
 }

@@ -2,7 +2,8 @@ import Foundation
 import SwiftData
 
 /// 流水写路径命令（设计文档 5.4）。不变量：ledgerID 非空且活跃、分类方向匹配、
-/// kind 终生不可改写、MVP 锁 CNY（fxRateToBase 恒 nil）。
+/// kind 终生不可改写；多币种必填规则：外币流水 fxRateToBase 强制非空（缺失预填最近快照）、
+/// 本位币恒 nil；跨币种转账 targetAmountMinorUnits 强制非空、同币种强制归 nil。
 struct TransactionService {
     let context: ModelContext
 
@@ -59,7 +60,8 @@ struct TransactionService {
         let account = try fetchActiveAccount(v.accountUUID)
         tx.note = v.note
         tx.account = account
-        tx.currencyCode = account.currencyCode // MVP 全 CNY；fxRateToBase 恒 nil
+        tx.currencyCode = account.currencyCode // 收支 = 账户币种；转账 = 转出方币种（§5.4）
+        tx.fxRateToBase = try resolvedFxRate(currencyCode: account.currencyCode, draftRate: v.fxRateToBase)
         tx.feeMinorUnits = v.feeMinorUnits
         switch v.kind {
         case .expense, .income:
@@ -67,10 +69,32 @@ struct TransactionService {
             guard category.kind == v.kind else { throw TransactionServiceError.categoryKindMismatch }
             tx.category = category
             tx.targetAccount = nil
+            tx.targetAmountMinorUnits = nil
         case .transfer:
-            tx.targetAccount = try fetchActiveAccount(v.targetAccountUUID!)
+            let targetAccount = try fetchActiveAccount(v.targetAccountUUID!)
+            tx.targetAccount = targetAccount
             tx.category = nil
+            if targetAccount.currencyCode == account.currencyCode {
+                tx.targetAmountMinorUnits = nil // 同币种转账强制归 nil（§5.4）
+            } else {
+                // 跨币种转账到账金额强制非空（转入方币种计）
+                guard let targetAmount = v.targetAmountMinorUnits else {
+                    throw TransactionServiceError.missingTargetAmount
+                }
+                tx.targetAmountMinorUnits = targetAmount
+            }
         }
+    }
+
+    /// §5.4 汇率必填规则：本位币恒 nil（草稿给了也归 nil）；
+    /// 外币强制非空——草稿未给则经 FxRateProvider 预填最近快照，仍无则抛错。
+    private func resolvedFxRate(currencyCode: String, draftRate: Decimal?) throws -> Decimal? {
+        guard currencyCode != FxConversion.baseCurrencyCode else { return nil }
+        if let draftRate { return draftRate }
+        guard let snapshot = try FxRateProvider(context: context).rate(for: currencyCode) else {
+            throw TransactionServiceError.missingFxRate
+        }
+        return snapshot
     }
 
     private func ensureActiveLedger(_ uuid: UUID) throws {
@@ -119,6 +143,8 @@ enum TransactionServiceError: LocalizedError {
     case categoryKindMismatch
     case kindImmutable
     case managedByInstallmentPlan
+    case missingFxRate
+    case missingTargetAmount
 
     var errorDescription: String? {
         switch self {
@@ -129,6 +155,8 @@ enum TransactionServiceError: LocalizedError {
         case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
         case .kindImmutable: String(localized: "流水类型不可修改，请删除后重新记一笔")
         case .managedByInstallmentPlan: String(localized: "分期还款流水请在分期计划中操作")
+        case .missingFxRate: String(localized: "外币流水需填写对人民币的汇率")
+        case .missingTargetAmount: String(localized: "跨币种转账需填写到账金额")
         }
     }
 }

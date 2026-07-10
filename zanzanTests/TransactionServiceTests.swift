@@ -145,6 +145,139 @@ struct TransactionServiceTests {
         #expect(!tx.isSoftDeleted)
     }
 
+    // MARK: - 多币种（§5.4 必填规则）
+
+    /// 建一个 USD 账户
+    private func makeUSDAccount(_ f: Fixture) throws -> Account {
+        let usd = Account(name: "美元卡", kind: .fund)
+        usd.currencyCode = "USD"
+        f.context.insert(usd)
+        try f.context.save()
+        return usd
+    }
+
+    @Test func 外币支出显式汇率落库() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = expenseDraft(f)
+        draft.accountUUID = usd.uuid
+        draft.fxRateString = "7.25"
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        #expect(tx.currencyCode == "USD")
+        #expect(tx.fxRateToBase == Decimal(string: "7.25"))
+    }
+
+    @Test func 外币支出无显式汇率用最近快照预填() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        let commands = TransactionService(context: f.context)
+        var first = expenseDraft(f)
+        first.accountUUID = usd.uuid
+        first.fxRateString = "7.10"
+        first.occurredAt = .now.addingTimeInterval(-3_600)
+        _ = try commands.recordTransaction(first, ledgerID: f.ledger.uuid)
+        var second = expenseDraft(f)
+        second.accountUUID = usd.uuid // 不填汇率
+        let tx = try commands.recordTransaction(second, ledgerID: f.ledger.uuid)
+        #expect(tx.fxRateToBase == Decimal(string: "7.10"))
+    }
+
+    @Test func 外币支出无汇率无快照抛错() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = expenseDraft(f)
+        draft.accountUUID = usd.uuid
+        #expect(throws: TransactionServiceError.self) {
+            _ = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        }
+    }
+
+    @Test func CNY流水草稿汇率被归nil() throws {
+        let f = try makeFixture()
+        var draft = expenseDraft(f)
+        draft.fxRateString = "7.25" // 本位币流水恒 nil，草稿给了也归 nil
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        #expect(tx.currencyCode == "CNY")
+        #expect(tx.fxRateToBase == nil)
+    }
+
+    @Test func 汇率与到账金额格式非法被拒() throws {
+        let f = try makeFixture()
+        var draft = expenseDraft(f)
+        draft.fxRateString = "-7.2"
+        #expect(throws: TransactionDraftError.self) { _ = try draft.validated() }
+        var transfer = TransactionDraft()
+        transfer.kind = .transfer
+        transfer.amountString = "100"
+        transfer.accountUUID = f.cash.uuid
+        transfer.targetAccountUUID = f.card.uuid
+        transfer.targetAmountString = "0"
+        #expect(throws: TransactionDraftError.self) { _ = try transfer.validated() }
+    }
+
+    @Test func 跨币种转账到账金额必填() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "725" // CNY → USD，转出方本位币无需汇率
+        draft.accountUUID = f.cash.uuid
+        draft.targetAccountUUID = usd.uuid
+        #expect(throws: TransactionServiceError.self) {
+            _ = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        }
+    }
+
+    @Test func 跨币种转账余额派生() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "725"       // 转出 725 CNY
+        draft.feeString = "5"            // 手续费 5 CNY
+        draft.targetAmountString = "100" // 到账 100 USD
+        draft.accountUUID = f.cash.uuid
+        draft.targetAccountUUID = usd.uuid
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        #expect(tx.currencyCode == "CNY") // 转账记转出方币种
+        #expect(tx.fxRateToBase == nil)
+        #expect(tx.targetAmountMinorUnits == 10_000)
+        #expect(tx.balanceDeltaMinorUnits(for: f.cash.uuid) == -(72_500 + 500)) // 转出 −(amount+fee) 原币
+        #expect(tx.balanceDeltaMinorUnits(for: usd.uuid) == 10_000)             // 转入 +targetAmount 目标币
+    }
+
+    @Test func 外币转出方转账强制汇率() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "100" // USD → CNY
+        draft.accountUUID = usd.uuid
+        draft.targetAccountUUID = f.cash.uuid
+        draft.targetAmountString = "725"
+        #expect(throws: TransactionServiceError.self) { // 无汇率无快照
+            _ = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        }
+        draft.fxRateString = "7.25"
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        #expect(tx.currencyCode == "USD")
+        #expect(tx.fxRateToBase == Decimal(string: "7.25"))
+        #expect(tx.targetAmountMinorUnits == 72_500)
+    }
+
+    @Test func 同币种转账到账金额归nil() throws {
+        let f = try makeFixture()
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "100"
+        draft.targetAmountString = "99" // 同币种强制归 nil，草稿给了也归 nil
+        draft.accountUUID = f.cash.uuid
+        draft.targetAccountUUID = f.card.uuid
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        #expect(tx.targetAmountMinorUnits == nil)
+        #expect(tx.balanceDeltaMinorUnits(for: f.card.uuid) == 10_000) // 转入按 amount
+    }
+
     @Test func 分期来源流水禁止通用删改恢复() throws {
         let f = try makeFixture()
         let commands = TransactionService(context: f.context)
