@@ -90,6 +90,78 @@ struct AccountServiceTests {
         #expect(snapshot.isSoftDeleted)
     }
 
+    // MARK: - 余额校准
+
+    private func makeAccountWithLedger(
+        context: ModelContext, initialBalance: String = "100"
+    ) throws -> Account {
+        let ledger = Ledger(name: "默认账本")
+        ledger.isDefault = true
+        context.insert(ledger)
+        var draft = AccountDraft()
+        draft.name = "理财"
+        draft.kind = .investment
+        draft.initialBalanceString = initialBalance
+        return try AccountService(context: context).createAccount(draft)
+    }
+
+    @Test func 校准生成adjustment流水且余额闭环() throws {
+        let context = try makeContext()
+        let account = try makeAccountWithLedger(context: context, initialBalance: "100") // 10000 分
+        let tx = try AccountService(context: context)
+            .calibrateBalance(accountUUID: account.uuid, actualBalanceMinorUnits: 12_345)
+        let unwrapped = try #require(tx)
+        #expect(unwrapped.kind == .income)
+        #expect(unwrapped.amountMinorUnits == 2_345)
+        #expect(unwrapped.sourceKind == .adjustment)
+        #expect(unwrapped.isExcludedFromStats)
+        #expect(unwrapped.ledgerID != nil)
+        let derived = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
+        #expect(derived == 12_345)
+    }
+
+    @Test func 零差额不生成流水() throws {
+        let context = try makeContext()
+        let account = try makeAccountWithLedger(context: context, initialBalance: "100")
+        let tx = try AccountService(context: context)
+            .calibrateBalance(accountUUID: account.uuid, actualBalanceMinorUnits: 10_000)
+        #expect(tx == nil)
+        let count = try context.fetchCount(FetchDescriptor<Transaction>())
+        #expect(count == 0)
+    }
+
+    @Test func 负差额生成支出流水向下校准() throws {
+        let context = try makeContext()
+        let account = try makeAccountWithLedger(context: context, initialBalance: "100")
+        let tx = try AccountService(context: context)
+            .calibrateBalance(accountUUID: account.uuid, actualBalanceMinorUnits: 8_000)
+        let unwrapped = try #require(tx)
+        #expect(unwrapped.kind == .expense)
+        #expect(unwrapped.amountMinorUnits == 2_000)
+        let derived = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
+        #expect(derived == 8_000)
+    }
+
+    @Test func 软删账户校准失败() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccountWithLedger(context: context)
+        try commands.softDeleteAccount(uuid: account.uuid)
+        #expect(throws: AccountServiceError.self) {
+            try commands.calibrateBalance(accountUUID: account.uuid, actualBalanceMinorUnits: 0)
+        }
+    }
+
+    @Test func 归档账户校准失败() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccountWithLedger(context: context)
+        try commands.setArchived(uuid: account.uuid, isArchived: true)
+        #expect(throws: AccountServiceError.self) {
+            try commands.calibrateBalance(accountUUID: account.uuid, actualBalanceMinorUnits: 0)
+        }
+    }
+
     @Test func 归档切换() throws {
         let context = try makeContext()
         let commands = AccountService(context: context)

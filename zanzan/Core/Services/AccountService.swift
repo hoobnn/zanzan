@@ -56,6 +56,30 @@ struct AccountService {
         try context.save()
     }
 
+    /// 校准到实际余额（设计文档 5.2）：按与派生余额的差额生成一笔 `adjustment` 收支流水，
+    /// 默认不计收支统计；差额为 0 不生成。理财账户市值更新走同一入口。
+    @discardableResult
+    func calibrateBalance(accountUUID: UUID, actualBalanceMinorUnits: Int, occurredAt: Date = .now) throws -> Transaction? {
+        let account = try fetchActiveAccount(accountUUID)
+        guard !account.isArchived else { throw AccountServiceError.accountArchived }
+        let currentBalance = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
+        let delta = actualBalanceMinorUnits - currentBalance
+        guard delta != 0 else { return nil }
+        let tx = Transaction(
+            kind: delta > 0 ? .income : .expense,
+            amountMinorUnits: abs(delta),
+            occurredAt: occurredAt,
+            ledgerID: try fetchDefaultLedgerID()
+        )
+        tx.account = account
+        tx.currencyCode = account.currencyCode // MVP 全 CNY；fxRateToBase 恒 nil
+        tx.sourceKindRawValue = TransactionSourceKind.adjustment.rawValue
+        tx.isExcludedFromStats = true
+        context.insert(tx)
+        try context.save()
+        return tx
+    }
+
     private func apply(_ v: AccountDraft.Validated, to account: Account) {
         account.name = v.name
         account.subtitle = v.subtitle
@@ -76,16 +100,31 @@ struct AccountService {
         }
         return account
     }
+
+    /// 校准流水归属账本：优先默认账本，违例回落首本（§4 同步合并兜底口径）。
+    private func fetchDefaultLedgerID() throws -> UUID {
+        let ledgers = try context.fetch(
+            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted })
+        )
+        guard let ledger = ledgers.first(where: \.isDefault) ?? ledgers.first else {
+            throw AccountServiceError.noLedgerAvailable
+        }
+        return ledger.uuid
+    }
 }
 
 enum AccountServiceError: LocalizedError {
     case accountNotFound
+    case accountArchived
     case hasActiveTransactions
+    case noLedgerAvailable
 
     var errorDescription: String? {
         switch self {
         case .accountNotFound: String(localized: "账户不存在或已删除")
+        case .accountArchived: String(localized: "账户已归档，恢复后才能校准余额")
         case .hasActiveTransactions: String(localized: "账户名下还有流水，无法删除；可先归档或转移流水")
+        case .noLedgerAvailable: String(localized: "没有可用账本，无法生成校准流水")
         }
     }
 }
