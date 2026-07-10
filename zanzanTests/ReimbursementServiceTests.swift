@@ -51,13 +51,14 @@ struct ReimbursementServiceTests {
         return account
     }
 
-    /// 登记到账的便捷入口（默认到账 CNY 现金户）
+    /// 登记到账的便捷入口（默认到账 CNY 现金户、默认落公共账本）
     @discardableResult
     private func settle(
         _ f: Fixture,
         kind: TransactionLinkKind = .reimbursement,
         amount: Int,
         account: Account? = nil,
+        ledgerID: UUID? = nil,
         allocations: [(Transaction, Int)]
     ) throws -> Transaction {
         try f.service.recordSettlement(
@@ -65,7 +66,7 @@ struct ReimbursementServiceTests {
             amountMinorUnits: amount,
             occurredAt: .now,
             accountUUID: (account ?? f.cash).uuid,
-            ledgerID: f.ledger.uuid,
+            ledgerID: ledgerID ?? f.ledger.uuid,
             allocations: allocations.map {
                 ReimbursementService.Allocation(originalTransactionUUID: $0.0.uuid, amountMinorUnits: $0.1)
             }
@@ -345,6 +346,60 @@ struct ReimbursementServiceTests {
         #expect(!settlement.isSoftDeleted) // 到账单本身保留（回落为普通收入）
     }
 
+    // MARK: - 恢复到账单（§4 撤销恢复按相反方向执行）
+
+    @Test func 恢复到账单级联恢复并回到settled() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(tx, 10_000)])
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+        #expect(tx.reimbursementStatus == .waiting)
+
+        try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        #expect(!settlement.isSoftDeleted)
+        #expect(settlement.settlementKind == .reimbursement) // 标记按关联行重算
+        let links = try activeLinks(f)
+        #expect(links.count == 1) // 级联软删的关联行随主实体一并恢复
+        #expect(links.first?.amountMinorUnits == 10_000)
+        #expect(tx.reimbursementStatus == .settled) // waiting → settled 正向重算
+    }
+
+    @Test func 恢复部分报销到账单原单回到waiting() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 6_000, allocations: [(tx, 6_000)])
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+
+        try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        #expect(tx.reimbursementStatus == .waiting) // 部分覆盖恢复后仍 waiting
+        #expect(try activeLinks(f).count == 1)
+    }
+
+    @Test func 恢复致原单超额分摊被阻断() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let old = try settle(f, amount: 6_000, allocations: [(tx, 6_000)])
+        try f.service.removeSettlement(transactionUUID: old.uuid)
+        try settle(f, amount: 10_000, allocations: [(tx, 10_000)]) // 软删期间另记全额到账
+        #expect(throws: ReimbursementServiceError.self) {
+            try f.service.restoreSettlement(transactionUUID: old.uuid) // 6000 + 10000 > 10000
+        }
+        #expect(old.isSoftDeleted) // 阻断时不落任何改动
+    }
+
+    @Test func 活跃流水不可按到账单恢复() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(tx, 10_000)])
+        #expect(throws: ReimbursementServiceError.self) {
+            try f.service.restoreSettlement(transactionUUID: settlement.uuid) // 未被软删
+        }
+    }
+
     @Test func 普通流水不可按到账单删除() throws {
         let f = try makeFixture()
         let tx = try makeExpense(f, amount: 10_000)
@@ -375,6 +430,42 @@ struct ReimbursementServiceTests {
         #expect(throws: ReimbursementServiceError.self) {
             try self.settle(f, kind: .refund, amount: 3_000, allocations: [(tx, 3_000)])
         }
+    }
+
+    @Test func 退款欠分摊被拒全额通过() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        // R4-M2：Σ 分摊 2_000 < 到账 3_000，差额会在统计里凭空消失 → 拒
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, kind: .refund, amount: 3_000, allocations: [(tx, 2_000)])
+        }
+        #expect(try activeLinks(f).isEmpty)
+        // 全额分摊通过；报销场景仍允许欠分摊（部分报销，文档明文）
+        try settle(f, kind: .refund, amount: 3_000, allocations: [(tx, 3_000)])
+        #expect(try activeLinks(f).count == 1)
+    }
+
+    @Test func 跨账本登记到账被拒() throws {
+        let f = try makeFixture()
+        let other = try LedgerService(context: f.context).createLedger(LedgerDraft(name: "旅行"))
+        let tx = try makeExpense(f, amount: 10_000) // 原单落公共账本
+        // R4-L2：到账单记到另一账本会把退款冲减记错账本 → 拒
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, kind: .refund, amount: 3_000, ledgerID: other.uuid, allocations: [(tx, 3_000)])
+        }
+    }
+
+    // MARK: - 前向兼容（R3-L1）
+
+    @Test func 未知报销状态串不被覆写() throws {
+        let f = try makeFixture()
+        let tx = try makeExpense(f, amount: 10_000)
+        tx.reimbursementStatusRawValue = "futureStatus" // 高版本写入的未知状态
+        try f.context.save()
+        #expect(throws: ReimbursementServiceError.self) {
+            try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        }
+        #expect(tx.reimbursementStatusRawValue == "futureStatus") // 不被覆写成 waiting
     }
 
     // MARK: - 月度统计口径（联动 MonthlyStatsProvider）

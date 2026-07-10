@@ -22,11 +22,16 @@ struct ReimbursementService {
 
     // MARK: - 垫付标记
 
-    /// 把既有支出流水标记为垫付（待报销），进入 waiting 状态
+    /// 把既有支出流水标记为垫付（待报销），进入 waiting 状态。
+    /// 前向兼容（R3-L1）：只有空串（未标记）可写入，高版本未知状态串不被覆写
     func markAwaitingReimbursement(transactionUUID: UUID) throws {
         let tx = try fetchActiveTransaction(transactionUUID)
         guard tx.kind == .expense else { throw ReimbursementServiceError.originalNotExpense }
-        guard tx.reimbursementStatus == nil else { throw ReimbursementServiceError.alreadyMarked }
+        guard tx.reimbursementStatusRawValue.isEmpty else {
+            throw tx.reimbursementStatus != nil
+                ? ReimbursementServiceError.alreadyMarked
+                : ReimbursementServiceError.unsupportedReimbursementStatus
+        }
         tx.reimbursementStatusRawValue = ReimbursementStatus.waiting.rawValue
         tx.updatedAt = .now
         try context.save()
@@ -96,6 +101,10 @@ struct ReimbursementService {
         for allocation in allocations {
             let original = try fetchActiveTransaction(allocation.originalTransactionUUID)
             guard original.kind == .expense else { throw ReimbursementServiceError.originalNotExpense }
+            // 跨账本关联阻断（R4-L2）：退款冲减按账本统计，原单与到账单必须同账本
+            guard original.ledgerID == ledgerID else {
+                throw ReimbursementServiceError.crossLedgerAllocation
+            }
             if kind == .reimbursement {
                 guard original.reimbursementStatus != nil else {
                     throw ReimbursementServiceError.originalNotMarked
@@ -111,10 +120,18 @@ struct ReimbursementService {
         // 「Σ 分摊 ≤ 到账金额」（§5.5）：全部同币种时保持精确整数比较（零行为变化）；
         // 涉及跨币种（垫付外币、本位币到账等）时各方按自身 fxRateToBase 折本位币，
         // 近似比较：Σ 折算分摊 ≤ 折算到账 × (1 + reimbursementToleranceRatio)
+        // 退款须全额分摊（R4-M2）：月度总支出按到账单全额冲减、分类排行只冲减 Σ link，
+        // 欠分摊差额会凭空消失——同币种要求精确相等，跨币种复用容差下界。
+        // 报销维持 Σ ≤ 到账（允许部分报销，§5.4）
         let allocationTotal = allocations.reduce(0) { $0 + $1.amountMinorUnits }
         if originals.allSatisfy({ $0.currencyCode == settlementCurrency }) {
             guard allocationTotal <= amountMinorUnits else {
                 throw ReimbursementServiceError.allocationExceedsSettlement
+            }
+            if kind == .refund {
+                guard allocationTotal == amountMinorUnits else {
+                    throw ReimbursementServiceError.refundAllocationMismatch
+                }
             }
         } else {
             let convertedAllocationTotal = zip(originals, allocations).reduce(0) { sum, pair in
@@ -126,6 +143,13 @@ struct ReimbursementService {
             let upperBound = Decimal(convertedSettlement) * (1 + FxConversion.reimbursementToleranceRatio)
             guard Decimal(convertedAllocationTotal) <= upperBound else {
                 throw ReimbursementServiceError.allocationExceedsSettlement
+            }
+            if kind == .refund {
+                let lowerBound = Decimal(convertedSettlement)
+                    * (1 - FxConversion.reimbursementToleranceRatio)
+                guard Decimal(convertedAllocationTotal) >= lowerBound else {
+                    throw ReimbursementServiceError.refundAllocationMismatch
+                }
             }
         }
 
@@ -170,6 +194,46 @@ struct ReimbursementService {
         settlement.updatedAt = .now
         for link in links {
             if let original = try? fetchActiveTransaction(link.originalTransactionID) {
+                try recomputeOriginalStatus(original)
+            }
+        }
+        try context.save()
+    }
+
+    /// 恢复被 removeSettlement 软删的到账单（§4 撤销恢复按相反方向执行）：
+    /// 恢复到账单流水与其被级联软删的关联行，重算受影响原单状态与到账单 settlementKind 标记。
+    /// 软删期间若已另记到账导致恢复后原单超额分摊，先行阻断（不落任何改动）。
+    func restoreSettlement(transactionUUID: UUID) throws {
+        let settlement = try fetchSoftDeletedTransaction(transactionUUID)
+        guard settlement.settlementKind != nil else { throw ReimbursementServiceError.notSettlement }
+        // ponytail: 无法区分「removeSettlement 级联软删的行」与「此前手动 removeLink 删的行」，
+        // 此处全部恢复；如需精确恢复可将来在 TransactionLink 上加删除来源标记
+        let links = try softDeletedLinks(settlementID: settlement.uuid)
+
+        // 先校验后落改：恢复不得使任一原单超额分摊（§5.5 Σ 分摊 ≤ 原单金额）
+        var restoredByOriginal: [UUID: Int] = [:]
+        for link in links {
+            restoredByOriginal[link.originalTransactionID, default: 0] += link.amountMinorUnits
+        }
+        for (originalID, restored) in restoredByOriginal {
+            guard let original = try? fetchActiveTransaction(originalID) else { continue }
+            let allocated = try allocatedAmount(originalID: originalID)
+            guard allocated + restored <= original.amountMinorUnits else {
+                throw ReimbursementServiceError.allocationExceedsOriginal
+            }
+        }
+
+        for link in links {
+            link.isSoftDeleted = false
+            link.updatedAt = .now
+        }
+        settlement.isSoftDeleted = false
+        settlement.updatedAt = .now
+        if let kind = links.first?.kind {
+            settlement.settlementKindRawValue = kind.rawValue // 冗余标记按关联行重算（5.4）
+        }
+        for originalID in restoredByOriginal.keys {
+            if let original = try? fetchActiveTransaction(originalID) {
                 try recomputeOriginalStatus(original)
             }
         }
@@ -230,6 +294,22 @@ struct ReimbursementService {
         ))
     }
 
+    private func softDeletedLinks(settlementID: UUID) throws -> [TransactionLink] {
+        try context.fetch(FetchDescriptor<TransactionLink>(
+            predicate: #Predicate { $0.isSoftDeleted && $0.settlementTransactionID == settlementID }
+        ))
+    }
+
+    private func fetchSoftDeletedTransaction(_ uuid: UUID) throws -> Transaction {
+        let descriptor = FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.isSoftDeleted && $0.uuid == uuid }
+        )
+        guard let tx = try context.fetch(descriptor).first else {
+            throw ReimbursementServiceError.transactionNotFound
+        }
+        return tx
+    }
+
     private func fetchActiveTransaction(_ uuid: UUID) throws -> Transaction {
         let descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
@@ -275,6 +355,9 @@ enum ReimbursementServiceError: LocalizedError {
     case allocationExceedsSettlement
     case notSettlement
     case missingSettlementFxRate
+    case refundAllocationMismatch
+    case crossLedgerAllocation
+    case unsupportedReimbursementStatus
 
     var errorDescription: String? {
         switch self {
@@ -294,6 +377,10 @@ enum ReimbursementServiceError: LocalizedError {
         case .allocationExceedsSettlement: String(localized: "分摊合计超过了到账金额")
         case .notSettlement: String(localized: "该流水不是报销或退款到账单")
         case .missingSettlementFxRate: String(localized: "外币到账账户缺少汇率快照，请先记一笔该币种流水")
+        case .refundAllocationMismatch: String(localized: "退款分摊合计必须等于到账金额")
+        case .crossLedgerAllocation: String(localized: "原支出与到账单必须属于同一账本")
+        case .unsupportedReimbursementStatus:
+            String(localized: "该流水的报销状态由更高版本创建，请升级 App 后操作")
         }
     }
 }
