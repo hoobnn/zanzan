@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "(%lld)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(%lld)"
+          }
+        }
+      }
+    },
     "%@账户" : {
       "localizations" : {
         "en" : {
@@ -17,16 +27,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Day %lld"
-          }
-        }
-      }
-    },
-    "(%lld)" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "(%lld)"
           }
         }
       }
@@ -161,22 +161,22 @@
         }
       }
     },
-    "信用额度格式不正确" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Invalid credit limit format"
-          }
-        }
-      }
-    },
     "信用额度（可选）" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Credit limit (optional)"
+          }
+        }
+      }
+    },
+    "信用额度格式不正确" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid credit limit format"
           }
         }
       }
@@ -232,6 +232,7 @@
       }
     },
     "分类" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -691,22 +692,23 @@
         }
       }
     },
+    "手续费（可选）" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fee (optional)"
+          }
+        }
+      }
+    },
     "手续费格式不正确" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Invalid fee format"
-          }
-        }
-      }
-    },
-    "手续费（可选）" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fee (optional)"
           }
         }
       }
@@ -882,6 +884,7 @@
       }
     },
     "日期" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1122,6 +1125,7 @@
       }
     },
     "点右上角「记一笔」开始记账" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1232,6 +1236,7 @@
       }
     },
     "编辑流水" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1282,6 +1287,7 @@
       }
     },
     "记一笔" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1612,6 +1618,7 @@
       }
     },
     "还没有流水" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1672,6 +1679,7 @@
       }
     },
     "金额" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1711,22 +1719,22 @@
         }
       }
     },
-    "餐饮" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dining"
-          }
-        }
-      }
-    },
     "饮料零食" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Drinks & Snacks"
+          }
+        }
+      }
+    },
+    "餐饮" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dining"
           }
         }
       }

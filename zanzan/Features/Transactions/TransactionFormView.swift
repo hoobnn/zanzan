@@ -243,7 +243,7 @@ struct TransactionFormView: View {
     // MARK: - 金额卡
 
     private var amountCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(verbatim: "¥\(expression.displayText)")
                 .font(.system(size: 36, weight: .heavy))
                 .monospacedDigit()

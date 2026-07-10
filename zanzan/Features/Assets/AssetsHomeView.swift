@@ -32,6 +32,8 @@ struct AssetsHomeView: View {
                 groupSection(group)
             }
         }
+        .listSectionSpacing(14)
+        .contentMargins(.top, 0, for: .scrollContent)
         .overlay {
             if accounts.isEmpty {
                 ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点右上角添加账户"))

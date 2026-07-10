@@ -6,7 +6,7 @@ struct MonthSummaryCard: View {
     let incomeMinorUnits: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "dollarsign.circle") // 预留主题图标
                 Text("月结余")

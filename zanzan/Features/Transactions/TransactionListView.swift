@@ -58,6 +58,8 @@ struct TransactionListView: View {
                 daySection(group)
             }
         }
+        .listSectionSpacing(14)
+        .contentMargins(.top, 0, for: .scrollContent)
         .overlay(alignment: .bottomTrailing) {
             // ponytail: 语音记账入口预留，仅占版式
             Image(systemName: "mic")
@@ -87,9 +89,9 @@ struct TransactionListView: View {
 
     private var monthSelectorSection: some View {
         Section {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Text(monthAnchor.formatted(.dateTime.year().month()))
-                    .font(.title3.weight(.semibold))
+                    .font(.title2.weight(.semibold))
                 monthStepButton("chevron.left", label: "上一月") { shiftMonth(-1) }
                 monthStepButton("chevron.right", label: "下一月") { shiftMonth(1) }
                 Spacer()
@@ -111,7 +113,7 @@ struct TransactionListView: View {
             Image(systemName: symbol)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 28, height: 28)
+                .frame(width: 30, height: 30)
                 .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
         }
         .buttonStyle(.plain)
