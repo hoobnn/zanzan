@@ -17,7 +17,7 @@ struct SettingsHomeView: View {
         .navigationDestination(for: SettingsRoute.self) { route in
             switch route {
             case .ledgers: LedgersListView()
-            case .accounts: ContentUnavailableView("账户管理开发中", systemImage: "creditcard")
+            case .accounts: AccountsListView()
             }
         }
     }
