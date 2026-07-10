@@ -15,6 +15,7 @@ final class zanzanUITests: XCTestCase {
     @MainActor
     func testAppIconOptionsFromSettings() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
 
         let assetsTab = app.tabBars.buttons["资产"]
@@ -46,6 +47,7 @@ final class zanzanUITests: XCTestCase {
     @MainActor
     func test资产页展示总览与分组并支持隐藏金额() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
 
         app.tabBars.buttons["资产"].tap()

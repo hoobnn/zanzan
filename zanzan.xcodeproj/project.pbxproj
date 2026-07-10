@@ -193,10 +193,11 @@
 				};
 			};
 			buildConfigurationList = 25CE93DF2FFB8F2B006CBD50 /* Build configuration list for PBXProject "zanzan" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				"zh-Hans",
 				Base,
 			);
 			mainGroup = 25CE93DB2FFB8F2B006CBD50;
