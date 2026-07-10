@@ -40,6 +40,32 @@ final class zanzanUITests: XCTestCase {
     }
 
     @MainActor
+    func test资产页展示总览与分组并支持隐藏金额() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        app.tabBars.buttons["资产"].tap()
+        XCTAssertTrue(app.staticTexts["净资产"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["总借入"].exists)
+        XCTAssertTrue(app.staticTexts["总借出"].exists)
+        attachScreenshot(app, name: "assets-overview")
+
+        // 隐藏金额
+        app.buttons["隐藏金额"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", "¥ ****")).firstMatch.waitForExistence(timeout: 2))
+        attachScreenshot(app, name: "assets-hidden")
+        app.buttons["显示金额"].tap()
+    }
+
+    @MainActor
+    private func attachScreenshot(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()

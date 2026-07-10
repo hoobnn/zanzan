@@ -55,7 +55,7 @@ struct AccountsListView: View {
             }
         }
         .sheet(item: $editingAccount) { account in
-            AccountFormView(title: "编辑账户", draft: draft(from: account)) { draft in
+            AccountFormView(title: "编辑账户", draft: AccountDraft(account: account)) { draft in
                 try AccountCommands(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
             }
         }
@@ -102,20 +102,6 @@ struct AccountsListView: View {
     private func balanceMinorUnits(of account: StoredAccount) -> Int {
         (try? AccountBalanceProjector(context: modelContext).balanceMinorUnits(of: account))
             ?? account.initialBalanceMinorUnits
-    }
-
-    private func draft(from account: StoredAccount) -> AccountDraft {
-        var draft = AccountDraft()
-        draft.name = account.name
-        draft.subtitle = account.subtitle
-        draft.kind = account.kind ?? .fund
-        draft.initialBalanceString = MoneyAmount.decimalString(fromMinorUnits: account.initialBalanceMinorUnits)
-        draft.creditLimitString = account.creditLimitMinorUnits.map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
-        draft.statementDay = account.statementDay
-        draft.paymentDueDay = account.paymentDueDay
-        draft.note = account.note
-        draft.isIncludedInNetWorth = account.isIncludedInNetWorth
-        return draft
     }
 
     private var isPresentingError: Binding<Bool> {

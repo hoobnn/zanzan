@@ -61,6 +61,22 @@ struct AccountDraft {
     }
 }
 
+extension AccountDraft {
+    /// 编辑表单回填（账户管理页/资产页共用）。
+    init(account: StoredAccount) {
+        self.init()
+        name = account.name
+        subtitle = account.subtitle
+        kind = account.kind ?? .fund
+        initialBalanceString = MoneyAmount.decimalString(fromMinorUnits: account.initialBalanceMinorUnits)
+        creditLimitString = account.creditLimitMinorUnits.map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
+        statementDay = account.statementDay
+        paymentDueDay = account.paymentDueDay
+        note = account.note
+        isIncludedInNetWorth = account.isIncludedInNetWorth
+    }
+}
+
 enum AccountDraftError: LocalizedError {
     case emptyName
     case invalidInitialBalance

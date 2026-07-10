@@ -6,6 +6,9 @@ struct RootView: View {
             Tab("明细", systemImage: "list.bullet.rectangle") {
                 NavigationStack { TransactionsHomeView() }
             }
+            Tab("资产", systemImage: "square.stack.3d.up.fill") {
+                NavigationStack { AssetsHomeView() }
+            }
             Tab("统计", systemImage: "chart.pie") {
                 NavigationStack { StatsHomeView() }
             }
