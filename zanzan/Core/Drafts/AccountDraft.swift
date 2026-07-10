@@ -85,10 +85,10 @@ enum AccountDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: "账户名不能为空"
-        case .invalidInitialBalance: "期初余额格式不正确"
-        case .invalidCreditLimit: "信用额度格式不正确"
-        case .invalidDayOfMonth: "账单日/还款日须在 1–28 之间"
+        case .emptyName: String(localized: "账户名不能为空")
+        case .invalidInitialBalance: String(localized: "期初余额格式不正确")
+        case .invalidCreditLimit: String(localized: "信用额度格式不正确")
+        case .invalidDayOfMonth: String(localized: "账单日/还款日须在 1–28 之间")
         }
     }
 }

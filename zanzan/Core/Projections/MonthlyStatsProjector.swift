@@ -117,7 +117,7 @@ enum MonthlyStatsError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidMonth: "无效的统计月份"
+        case .invalidMonth: String(localized: "无效的统计月份")
         }
     }
 }

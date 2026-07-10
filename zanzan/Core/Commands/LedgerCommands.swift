@@ -82,9 +82,9 @@ enum LedgerCommandError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .ledgerNotFound: "账本不存在或已删除"
-        case .cannotDeleteDefault: "默认账本不能删除，请先把其他账本设为默认"
-        case .hasActiveTransactions: "账本内还有流水，无法删除；可先归档或迁移流水"
+        case .ledgerNotFound: String(localized: "账本不存在或已删除")
+        case .cannotDeleteDefault: String(localized: "默认账本不能删除，请先把其他账本设为默认")
+        case .hasActiveTransactions: String(localized: "账本内还有流水，无法删除；可先归档或迁移流水")
         }
     }
 }

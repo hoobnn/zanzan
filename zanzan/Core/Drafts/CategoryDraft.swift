@@ -46,8 +46,8 @@ enum CategoryDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: "分类名不能为空"
-        case .invalidKind: "分类方向只能是支出或收入"
+        case .emptyName: String(localized: "分类名不能为空")
+        case .invalidKind: String(localized: "分类方向只能是支出或收入")
         }
     }
 }

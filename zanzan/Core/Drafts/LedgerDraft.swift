@@ -19,7 +19,7 @@ enum LedgerDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: "账本名不能为空"
+        case .emptyName: String(localized: "账本名不能为空")
         }
     }
 }

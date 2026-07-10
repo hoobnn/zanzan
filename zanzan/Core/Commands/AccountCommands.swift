@@ -84,8 +84,8 @@ enum AccountCommandError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accountNotFound: "账户不存在或已删除"
-        case .hasActiveTransactions: "账户名下还有流水，无法删除；可先归档或转移流水"
+        case .accountNotFound: String(localized: "账户不存在或已删除")
+        case .hasActiveTransactions: String(localized: "账户名下还有流水，无法删除；可先归档或转移流水")
         }
     }
 }

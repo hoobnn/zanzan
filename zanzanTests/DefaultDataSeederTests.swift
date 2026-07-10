@@ -27,7 +27,7 @@ struct DefaultDataSeederTests {
         #expect(expenseRoots.count == 8)
         #expect(incomeRoots.count == 4)
         // 两级树：餐饮下有子类且 parentID 正确
-        let dining = try #require(expenseRoots.first { $0.name == "餐饮" })
+        let dining = try #require(expenseRoots.first { $0.name == String(localized: "餐饮") })
         let children = categories.filter { $0.parentID == dining.uuid }
         #expect(children.count == 4)
     }

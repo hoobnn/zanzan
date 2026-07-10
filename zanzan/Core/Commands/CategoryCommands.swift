@@ -147,16 +147,16 @@ enum CategoryCommandError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .categoryNotFound: "分类不存在或已删除"
-        case .parentNotFound: "父分类不存在或已删除"
-        case .parentIsSubcategory: "只支持两级分类，子分类下不能再建分类"
-        case .parentKindMismatch: "父分类方向与本分类不一致"
-        case .kindImmutable: "分类方向创建后不可修改"
-        case .wouldCreateThirdLevel: "该分类下还有子分类，不能移动为子分类"
-        case .selfParent: "不能把分类挂到自己名下"
-        case .hasActiveTransactions: "分类名下还有流水，无法删除；可先归档或转移流水"
-        case .hasActiveChildren: "请先处理全部子分类，再删除父分类"
-        case .reorderScopeMismatch: "排序列表必须是同一层级、同一方向的分类"
+        case .categoryNotFound: String(localized: "分类不存在或已删除")
+        case .parentNotFound: String(localized: "父分类不存在或已删除")
+        case .parentIsSubcategory: String(localized: "只支持两级分类，子分类下不能再建分类")
+        case .parentKindMismatch: String(localized: "父分类方向与本分类不一致")
+        case .kindImmutable: String(localized: "分类方向创建后不可修改")
+        case .wouldCreateThirdLevel: String(localized: "该分类下还有子分类，不能移动为子分类")
+        case .selfParent: String(localized: "不能把分类挂到自己名下")
+        case .hasActiveTransactions: String(localized: "分类名下还有流水，无法删除；可先归档或转移流水")
+        case .hasActiveChildren: String(localized: "请先处理全部子分类，再删除父分类")
+        case .reorderScopeMismatch: String(localized: "排序列表必须是同一层级、同一方向的分类")
         }
     }
 }

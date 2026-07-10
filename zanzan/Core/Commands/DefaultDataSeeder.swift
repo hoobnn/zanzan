@@ -15,9 +15,9 @@ struct DefaultDataSeeder {
         )
         guard doneCount == 0 else { return }
 
-        try LedgerCommands(context: context).createLedger(LedgerDraft(name: "日常账本"))
+        try LedgerCommands(context: context).createLedger(LedgerDraft(name: String(localized: "日常账本")))
 
-        let cash = StoredAccount(name: "现金", kind: .fund)
+        let cash = StoredAccount(name: String(localized: "现金"), kind: .fund)
         cash.iconKindRawValue = StoredIconDescriptor.Kind.symbol.rawValue
         cash.iconPrimary = "banknote"
         context.insert(cash)
@@ -38,23 +38,23 @@ struct DefaultDataSeeder {
     }
 
     private static let expenseTree: [SeedCategory] = [
-        SeedCategory(name: "餐饮", symbol: "fork.knife", children: [
-            ("早餐", "sunrise"), ("午餐", "sun.max"), ("晚餐", "moon"), ("饮料零食", "cup.and.saucer"),
+        SeedCategory(name: String(localized: "餐饮"), symbol: "fork.knife", children: [
+            (String(localized: "早餐"), "sunrise"), (String(localized: "午餐"), "sun.max"), (String(localized: "晚餐"), "moon"), (String(localized: "饮料零食"), "cup.and.saucer"),
         ]),
-        SeedCategory(name: "交通", symbol: "car"),
-        SeedCategory(name: "购物", symbol: "cart"),
-        SeedCategory(name: "居住", symbol: "house"),
-        SeedCategory(name: "娱乐", symbol: "gamecontroller"),
-        SeedCategory(name: "医疗", symbol: "cross.case"),
-        SeedCategory(name: "人情", symbol: "gift"),
-        SeedCategory(name: "其他", symbol: "ellipsis.circle"),
+        SeedCategory(name: String(localized: "交通"), symbol: "car"),
+        SeedCategory(name: String(localized: "购物"), symbol: "cart"),
+        SeedCategory(name: String(localized: "居住"), symbol: "house"),
+        SeedCategory(name: String(localized: "娱乐"), symbol: "gamecontroller"),
+        SeedCategory(name: String(localized: "医疗"), symbol: "cross.case"),
+        SeedCategory(name: String(localized: "人情"), symbol: "gift"),
+        SeedCategory(name: String(localized: "其他"), symbol: "ellipsis.circle"),
     ]
 
     private static let incomeTree: [SeedCategory] = [
-        SeedCategory(name: "工资", symbol: "banknote"),
-        SeedCategory(name: "奖金", symbol: "star"),
-        SeedCategory(name: "理财收益", symbol: "chart.line.uptrend.xyaxis"),
-        SeedCategory(name: "其他收入", symbol: "tray.and.arrow.down"),
+        SeedCategory(name: String(localized: "工资"), symbol: "banknote"),
+        SeedCategory(name: String(localized: "奖金"), symbol: "star"),
+        SeedCategory(name: String(localized: "理财收益"), symbol: "chart.line.uptrend.xyaxis"),
+        SeedCategory(name: String(localized: "其他收入"), symbol: "tray.and.arrow.down"),
     ]
 
     private func seedCategories(kind: TransactionKind, tree: [SeedCategory]) {

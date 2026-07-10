@@ -110,12 +110,12 @@ enum TransactionCommandError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .ledgerNotFound: "账本不存在或已删除"
-        case .accountNotFound: "账户不存在或已删除"
-        case .categoryNotFound: "分类不存在或已删除"
-        case .transactionNotFound: "流水不存在"
-        case .categoryKindMismatch: "分类方向与流水类型不一致"
-        case .kindImmutable: "流水类型不可修改，请删除后重新记一笔"
+        case .ledgerNotFound: String(localized: "账本不存在或已删除")
+        case .accountNotFound: String(localized: "账户不存在或已删除")
+        case .categoryNotFound: String(localized: "分类不存在或已删除")
+        case .transactionNotFound: String(localized: "流水不存在")
+        case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
+        case .kindImmutable: String(localized: "流水类型不可修改，请删除后重新记一笔")
         }
     }
 }

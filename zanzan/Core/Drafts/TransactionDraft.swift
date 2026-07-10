@@ -68,12 +68,12 @@ enum TransactionDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidAmount: "金额须为大于 0 的数字（最多两位小数）"
-        case .missingAccount: "请选择账户"
-        case .missingCategory: "请选择分类"
-        case .missingTargetAccount: "请选择转入账户"
-        case .sameTransferAccounts: "转出与转入账户不能相同"
-        case .invalidFee: "手续费格式不正确"
+        case .invalidAmount: String(localized: "金额须为大于 0 的数字（最多两位小数）")
+        case .missingAccount: String(localized: "请选择账户")
+        case .missingCategory: String(localized: "请选择分类")
+        case .missingTargetAccount: String(localized: "请选择转入账户")
+        case .sameTransferAccounts: String(localized: "转出与转入账户不能相同")
+        case .invalidFee: String(localized: "手续费格式不正确")
         }
     }
 }
