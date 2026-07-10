@@ -1,0 +1,74 @@
+import SwiftData
+import SwiftUI
+
+/// 账本管理（我的 → 账本管理）。静态谓词 @Query；写操作全走 LedgerCommands。
+struct LedgersListView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
+    private var ledgers: [StoredLedger]
+
+    @State private var isAddingLedger = false
+    @State private var editingLedger: StoredLedger?
+    @State private var commandErrorMessage: String?
+
+    var body: some View {
+        List {
+            ForEach(ledgers) { ledger in
+                Button {
+                    editingLedger = ledger
+                } label: {
+                    HStack {
+                        Text(ledger.name)
+                        Spacer()
+                        if ledger.isDefault {
+                            Text("默认").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .tint(.primary)
+                .swipeActions(edge: .trailing) {
+                    Button("删除", systemImage: "trash", role: .destructive) {
+                        run { try LedgerCommands(context: modelContext).softDeleteLedger(uuid: ledger.uuid) }
+                    }
+                    if !ledger.isDefault {
+                        Button("设为默认", systemImage: "checkmark.circle") {
+                            run { try LedgerCommands(context: modelContext).setDefaultLedger(uuid: ledger.uuid) }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("账本管理")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("新建账本", systemImage: "plus") { isAddingLedger = true }
+            }
+        }
+        .sheet(isPresented: $isAddingLedger) {
+            LedgerFormView(title: "新建账本", draft: LedgerDraft()) { draft in
+                try LedgerCommands(context: modelContext).createLedger(draft)
+            }
+        }
+        .sheet(item: $editingLedger) { ledger in
+            LedgerFormView(title: "编辑账本", draft: LedgerDraft(name: ledger.name, colorID: ledger.colorID)) { draft in
+                try LedgerCommands(context: modelContext).updateLedger(uuid: ledger.uuid, draft: draft)
+            }
+        }
+        .alert("操作失败", isPresented: isPresentingError) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(commandErrorMessage ?? "")
+        }
+    }
+
+    private var isPresentingError: Binding<Bool> {
+        Binding(
+            get: { commandErrorMessage != nil },
+            set: { if !$0 { commandErrorMessage = nil } }
+        )
+    }
+
+    private func run(_ command: () throws -> Void) {
+        do { try command() } catch { commandErrorMessage = error.localizedDescription }
+    }
+}
