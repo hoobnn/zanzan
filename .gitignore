@@ -51,6 +51,9 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
 
+# === 本地临时文件 ===
+temp/
+
 # === Agent skills (本地工具链，非项目源码) ===
 .agents/
 .claude/
