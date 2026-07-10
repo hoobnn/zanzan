@@ -72,7 +72,8 @@ struct MonthlyStatsProjector {
             let value = amount(tx)
             guard value > 0 else { continue }
             categoriesByUUID[category.uuid] = category
-            if let parentID = category.parentID, let parent = fetchCategory(parentID) {
+            if let parentID = category.parentID,
+               let parent = categoriesByUUID[parentID] ?? fetchCategory(parentID) {
                 childAmounts[category.uuid, default: 0] += value
                 parentUUIDOfChild[category.uuid] = parent.uuid
                 categoriesByUUID[parent.uuid] = parent
