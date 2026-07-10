@@ -35,13 +35,9 @@ struct TransactionsHomeView: View {
                     Label("账本管理", systemImage: "ellipsis")
                 }
             }
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
             ToolbarItem(placement: .topBarTrailing) {
-                // ponytail: 头像图片预留，先用 SF Symbol 占位
-                NavigationLink {
-                    SettingsHomeView()
-                } label: {
-                    Label("我的", systemImage: "person.crop.circle")
-                }
+                AvatarToolbarLink()
             }
         }
     }
