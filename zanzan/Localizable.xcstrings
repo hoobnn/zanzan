@@ -1758,6 +1758,1078 @@
           }
         }
       }
+    },
+    "%lld 行数据有误，本次导入已整批取消" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "1 row contains errors; the entire import was canceled"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld rows contain errors; the entire import was canceled"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "CSV 格式不正确（引号未闭合或位置非法）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid CSV format (unclosed or misplaced quotes)"
+          }
+        }
+      }
+    },
+    "仅信用卡类账户可加入授信池" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only credit card accounts can join a shared credit pool"
+          }
+        }
+      }
+    },
+    "仅信用卡类账户有账单周期" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only credit card accounts have statement cycles"
+          }
+        }
+      }
+    },
+    "仅跨币种转账行可填写到账金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only cross-currency transfer rows may include a received amount"
+          }
+        }
+      }
+    },
+    "债务账户类型与计划类型不匹配（分期须挂信用账户，贷款须挂应付账户）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debt account type does not match the plan type (installments require a credit account; loans require a payable account)"
+          }
+        }
+      }
+    },
+    "先息后本暂不支持" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interest-first repayment is not supported yet"
+          }
+        }
+      }
+    },
+    "关联记录不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link record does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "分摊合计超过了到账金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocations exceed the received amount"
+          }
+        }
+      }
+    },
+    "分摊明细无效：金额需大于 0 且不可重复选择同一笔流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid allocation: amounts must be greater than 0 and a transaction cannot be selected twice"
+          }
+        }
+      }
+    },
+    "分期期数不存在" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installment period does not exist"
+          }
+        }
+      }
+    },
+    "分期计划不存在" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installment plan does not exist"
+          }
+        }
+      }
+    },
+    "分期还款流水请在分期计划中操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manage installment payments from the installment plan"
+          }
+        }
+      }
+    },
+    "分类「%@」不存在或方向不符" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Category “%@” does not exist or has a mismatched direction"
+          }
+        }
+      }
+    },
+    "列数不符，应为 %lld 列，实际 %lld 列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wrong column count: expected %lld but found %lld"
+          }
+        }
+      }
+    },
+    "到账金额「%@」不正确（跨币种转账须为大于 0 的十进制数，最多两位小数）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid received amount “%@” (cross-currency transfers require a decimal number greater than 0, up to two decimal places)"
+          }
+        }
+      }
+    },
+    "到账金额必须大于 0" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received amount must be greater than 0"
+          }
+        }
+      }
+    },
+    "到账金额须为大于 0 的数字（最多两位小数）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received amount must be a number greater than 0 (up to two decimal places)"
+          }
+        }
+      }
+    },
+    "只有待报销的流水可以结案" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only transactions awaiting reimbursement can be closed"
+          }
+        }
+      }
+    },
+    "只有支出分类可以设置预算" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budgets can only be set on expense categories"
+          }
+        }
+      }
+    },
+    "只有支出流水可以报销或退款" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only expense transactions can be reimbursed or refunded"
+          }
+        }
+      }
+    },
+    "只能使用全局标签或本账本的标签" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only global tags or tags from this ledger can be used"
+          }
+        }
+      }
+    },
+    "周期计划不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recurring plan does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "周期计划数据异常，请删除后重建" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recurring plan data is invalid; delete it and create it again"
+          }
+        }
+      }
+    },
+    "周期计划暂不支持跨币种转账" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recurring plans do not support cross-currency transfers yet"
+          }
+        }
+      }
+    },
+    "固定手续费方式需要填写每期手续费" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The fixed-fee method requires a per-period fee"
+          }
+        }
+      }
+    },
+    "外币到账账户缺少汇率快照，请先记一笔该币种流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The foreign-currency receiving account has no exchange-rate snapshot; record a transaction in that currency first"
+          }
+        }
+      }
+    },
+    "外币流水需填写对人民币的汇率" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Foreign-currency transactions require an exchange rate to CNY"
+          }
+        }
+      }
+    },
+    "导入批次不存在" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import batch does not exist"
+          }
+        }
+      }
+    },
+    "已存在同名标签" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A tag with the same name already exists"
+          }
+        }
+      }
+    },
+    "币种「%@」与账户币种「%@」不符" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency “%@” does not match the account currency “%@”"
+          }
+        }
+      }
+    },
+    "币种代码须为 3 位大写字母（ISO 4217）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency code must be 3 uppercase letters (ISO 4217)"
+          }
+        }
+      }
+    },
+    "年利率不能为负" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annual interest rate cannot be negative"
+          }
+        }
+      }
+    },
+    "总授信额度须为正数金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total credit limit must be a positive amount"
+          }
+        }
+      }
+    },
+    "总期数至少为 1 期" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There must be at least 1 period"
+          }
+        }
+      }
+    },
+    "成员卡币种须与授信池一致" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Member card currency must match the shared credit pool"
+          }
+        }
+      }
+    },
+    "截止时间不能早于开始时间" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End time cannot be earlier than the start time"
+          }
+        }
+      }
+    },
+    "截止时间之前没有任何触发日" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There are no trigger dates before the end time"
+          }
+        }
+      }
+    },
+    "手续费「%@」不正确（应为不含千分位的十进制数，最多两位小数）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid fee “%@” (expected a decimal number without thousands separators, up to two decimal places)"
+          }
+        }
+      }
+    },
+    "授信池不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shared credit pool does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "授信池名称不能为空" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shared credit pool name cannot be empty"
+          }
+        }
+      }
+    },
+    "文件中没有可导入的流水行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The file contains no importable transaction rows"
+          }
+        }
+      }
+    },
+    "无效的预算月份" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid budget month"
+          }
+        }
+      }
+    },
+    "无法推算应还日期" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to determine the due date"
+          }
+        }
+      }
+    },
+    "无法计算下次触发时间，请检查计划设置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to compute the next trigger time; check the plan settings"
+          }
+        }
+      }
+    },
+    "日期「%@」格式不正确（应为 yyyy-MM-dd 或 yyyy-MM-dd HH:mm:ss）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid date “%@” (expected yyyy-MM-dd or yyyy-MM-dd HH:mm:ss)"
+          }
+        }
+      }
+    },
+    "期数表生成失败：本息拆分不成立" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to generate the period schedule: the principal-interest split does not add up"
+          }
+        }
+      }
+    },
+    "本位币（CNY）行不应填写汇率" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base-currency (CNY) rows must not include an exchange rate"
+          }
+        }
+      }
+    },
+    "本金总额不能少于期数（每期本金至少 1 分）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total principal cannot be less than the number of periods (at least 1 cent of principal per period)"
+          }
+        }
+      }
+    },
+    "本金总额必须大于零" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total principal must be greater than zero"
+          }
+        }
+      }
+    },
+    "标签不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tag does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "标签名不能为空" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tag name cannot be empty"
+          }
+        }
+      }
+    },
+    "标签已归档，不能挂到新流水；可先取消归档" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The tag is archived and cannot be added to new transactions; unarchive it first"
+          }
+        }
+      }
+    },
+    "标签归属账本创建后不可修改" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A tag's ledger cannot be changed after creation"
+          }
+        }
+      }
+    },
+    "每期手续费不能为负" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per-period fee cannot be negative"
+          }
+        }
+      }
+    },
+    "汇率「%@」不正确（外币行须为大于 0 的十进制数）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid exchange rate “%@” (foreign-currency rows require a decimal number greater than 0)"
+          }
+        }
+      }
+    },
+    "汇率须为大于 0 的数字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exchange rate must be a number greater than 0"
+          }
+        }
+      }
+    },
+    "没有可用账本，无法生成校准流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No ledger available; cannot create a balance calibration transaction"
+          }
+        }
+      }
+    },
+    "没有待还期数，无需结清" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No outstanding periods; nothing to settle"
+          }
+        }
+      }
+    },
+    "流水不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "流水已删除，无法操作附件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The transaction has been deleted; attachments cannot be modified"
+          }
+        }
+      }
+    },
+    "类型「%@」无法识别（仅支持：支出/收入/转账）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unrecognized type “%@” (only 支出/收入/转账 are supported)"
+          }
+        }
+      }
+    },
+    "累计分摊金额超过了原支出金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total allocated amount exceeds the original expense"
+          }
+        }
+      }
+    },
+    "结清违约金不能为负" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Early settlement penalty cannot be negative"
+          }
+        }
+      }
+    },
+    "自定义期数本金合计须等于本金总额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom period principals must add up to the total principal"
+          }
+        }
+      }
+    },
+    "自定义期数每期本金至少 1 分、利息不能为负" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each custom period needs at least 1 cent of principal, and interest cannot be negative"
+          }
+        }
+      }
+    },
+    "自定义期数行数须等于总期数" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The number of custom period rows must equal the total number of periods"
+          }
+        }
+      }
+    },
+    "表头不符，应为：日期,类型,金额,分类,账户,转入账户,手续费,备注,币种,汇率,到账金额（或不含后三列的旧格式）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid header; expected: 日期,类型,金额,分类,账户,转入账户,手续费,备注,币种,汇率,到账金额 (or the legacy format without the last three columns)"
+          }
+        }
+      }
+    },
+    "触发日超出有效范围" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trigger day is out of range"
+          }
+        }
+      }
+    },
+    "计划名称不能为空" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan name cannot be empty"
+          }
+        }
+      }
+    },
+    "计划已完结，不可再操作期数" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The plan is completed; its periods can no longer be modified"
+          }
+        }
+      }
+    },
+    "计划已提前结清，已还期数不可撤销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The plan was settled early; paid periods cannot be undone"
+          }
+        }
+      }
+    },
+    "该信用卡未设置账单日" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This credit card has no statement day set"
+          }
+        }
+      }
+    },
+    "该分类的预算已存在，可直接修改额度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A budget for this category already exists; edit its amount instead"
+          }
+        }
+      }
+    },
+    "该周期计划由更高版本创建，请升级 App 后操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This recurring plan was created by a newer app version; update the app to manage it"
+          }
+        }
+      }
+    },
+    "该币种暂无汇率快照，请提供汇率或先记一笔带汇率的流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No exchange-rate snapshot for this currency; provide a rate or record a transaction with one first"
+          }
+        }
+      }
+    },
+    "该期尚未还款，无可撤销的流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This period has not been paid; there is no transaction to undo"
+          }
+        }
+      }
+    },
+    "该期已还款，不可重复记" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This period is already paid and cannot be recorded again"
+          }
+        }
+      }
+    },
+    "该期已随提前结清取消" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This period was canceled by the early settlement"
+          }
+        }
+      }
+    },
+    "该期状态无法识别，请升级应用后重试" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unrecognized period status; update the app and try again"
+          }
+        }
+      }
+    },
+    "该流水不是报销或退款到账单" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transaction is not a reimbursement or refund deposit"
+          }
+        }
+      }
+    },
+    "该流水已有报销记录，请先解除关联" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transaction already has reimbursement records; unlink them first"
+          }
+        }
+      }
+    },
+    "该流水已标记为待报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transaction is already marked as awaiting reimbursement"
+          }
+        }
+      }
+    },
+    "该流水未标记为待报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transaction is not marked as awaiting reimbursement"
+          }
+        }
+      }
+    },
+    "该还款方式需要填写年利率" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This repayment method requires an annual interest rate"
+          }
+        }
+      }
+    },
+    "请先将支出标记为待报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark the expense as awaiting reimbursement first"
+          }
+        }
+      }
+    },
+    "请输入计划名称" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please enter a plan name"
+          }
+        }
+      }
+    },
+    "请选择债务账户" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please select a debt account"
+          }
+        }
+      }
+    },
+    "请选择账本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please select a ledger"
+          }
+        }
+      }
+    },
+    "账单日须在 1–31 之间" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statement day must be between 1 and 31"
+          }
+        }
+      }
+    },
+    "账户「%@」不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account “%@” does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "账户在授信池内，需先解绑才能修改币种" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The account is in a shared credit pool; remove it before changing the currency"
+          }
+        }
+      }
+    },
+    "账户已归档，恢复后才能校准余额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The account is archived; restore it before calibrating the balance"
+          }
+        }
+      }
+    },
+    "账户已有流水，币种不可修改" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The account already has transactions; its currency cannot be changed"
+          }
+        }
+      }
+    },
+    "跨币种转账需填写到账金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cross-currency transfers require a received amount"
+          }
+        }
+      }
+    },
+    "还款账户需与分期账户同币种" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The repayment account must use the same currency as the installment account"
+          }
+        }
+      }
+    },
+    "重复间隔必须大于等于 1" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repeat interval must be at least 1"
+          }
+        }
+      }
+    },
+    "金额「%@」不正确（应为不含千分位的十进制数，最多两位小数）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid amount “%@” (expected a decimal number without thousands separators, up to two decimal places)"
+          }
+        }
+      }
+    },
+    "附件不存在或已被删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attachment does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "附件文件名非法" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid attachment file name"
+          }
+        }
+      }
+    },
+    "预算不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "预算分类不存在或已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget category does not exist or has been deleted"
+          }
+        }
+      }
+    },
+    "预算只能设在一级分类上，子分类金额会汇入父类" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budgets can only be set on top-level categories; subcategory amounts roll up to the parent"
+          }
+        }
+      }
+    },
+    "预算年份与月份必须同时填写或同时留空" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget year and month must both be set or both be empty"
+          }
+        }
+      }
+    },
+    "预算月份必须在 1 到 12 之间" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget month must be between 1 and 12"
+          }
+        }
+      }
+    },
+    "预算金额必须大于零" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget amount must be greater than zero"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
