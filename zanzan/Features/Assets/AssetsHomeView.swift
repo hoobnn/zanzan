@@ -39,13 +39,14 @@ struct AssetsHomeView: View {
         }
         .navigationTitle("资产")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("添加账户", systemImage: "plus") { isAddingAccount = true }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("账户管理", systemImage: "ellipsis") { isShowingManagement = true }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("添加账户", systemImage: "plus") { isAddingAccount = true }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
+                // ponytail: 头像图片预留，先用 SF Symbol 占位
                 // ponytail: 用 NavigationLink 直推——isPresented push 的页内再做 value push 会被弹回。
                 NavigationLink {
                     SettingsHomeView()

@@ -31,6 +31,36 @@
         }
       }
     },
+    "0.00（可选）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0.00 (Optional)"
+          }
+        }
+      }
+    },
+    "上一月" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous Month"
+          }
+        }
+      }
+    },
+    "下一月" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next Month"
+          }
+        }
+      }
+    },
     "不能把分类挂到自己名下" : {
       "localizations" : {
         "en" : {
@@ -71,6 +101,16 @@
         }
       }
     },
+    "优惠" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discounts"
+          }
+        }
+      }
+    },
     "余额" : {
       "localizations" : {
         "en" : {
@@ -97,6 +137,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Save"
+          }
+        }
+      }
+    },
+    "保存再记" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save & Continue"
           }
         }
       }
@@ -137,6 +187,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prepaid"
+          }
+        }
+      }
+    },
+    "关闭" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
           }
         }
       }
@@ -331,6 +391,16 @@
         }
       }
     },
+    "图片" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photos"
+          }
+        }
+      }
+    },
     "备注" : {
       "localizations" : {
         "en" : {
@@ -391,6 +461,16 @@
         }
       }
     },
+    "完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        }
+      }
+    },
     "居住" : {
       "localizations" : {
         "en" : {
@@ -411,6 +491,16 @@
         }
       }
     },
+    "展开当日流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand this day's transactions"
+          }
+        }
+      }
+    },
     "工资" : {
       "localizations" : {
         "en" : {
@@ -427,6 +517,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Archived"
+          }
+        }
+      }
+    },
+    "已报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reimbursed"
           }
         }
       }
@@ -501,6 +601,16 @@
         }
       }
     },
+    "待报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Awaiting Reimbursement"
+          }
+        }
+      }
+    },
     "总借入" : {
       "localizations" : {
         "en" : {
@@ -517,6 +627,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total Lent"
+          }
+        }
+      }
+    },
+    "总支出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total Expense"
+          }
+        }
+      }
+    },
+    "总收入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total Income"
           }
         }
       }
@@ -551,6 +681,16 @@
         }
       }
     },
+    "手续费" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fee"
+          }
+        }
+      }
+    },
     "手续费格式不正确" : {
       "localizations" : {
         "en" : {
@@ -577,6 +717,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Collapse group"
+          }
+        }
+      }
+    },
+    "折叠当日流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse this day's transactions"
+          }
+        }
+      }
+    },
+    "报销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reimbursement"
+          }
+        }
+      }
+    },
+    "报销入账" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reimbursement Received"
           }
         }
       }
@@ -611,12 +781,42 @@
         }
       }
     },
+    "支出: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expense: %@"
+          }
+        }
+      }
+    },
     "收入" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Income"
+          }
+        }
+      }
+    },
+    "收入: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Income: %@"
+          }
+        }
+      }
+    },
+    "收支日历" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar"
           }
         }
       }
@@ -647,6 +847,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Invalid statistics month"
+          }
+        }
+      }
+    },
+    "无法保存" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to Save"
           }
         }
       }
@@ -721,6 +931,16 @@
         }
       }
     },
+    "月结余" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monthly Balance"
+          }
+        }
+      }
+    },
     "期初余额" : {
       "localizations" : {
         "en" : {
@@ -787,6 +1007,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not selected"
+          }
+        }
+      }
+    },
+    "本月还没有流水" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Transactions This Month"
+          }
+        }
+      }
+    },
+    "标签" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags"
           }
         }
       }
@@ -861,12 +1101,42 @@
         }
       }
     },
+    "点下方「记账」开始记账" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap “Record” below to start tracking"
+          }
+        }
+      }
+    },
+    "点击填写备注" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to add a note"
+          }
+        }
+      }
+    },
     "点右上角「记一笔」开始记账" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tap “Add Entry” in the top right to start tracking"
+          }
+        }
+      }
+    },
+    "点右上角「账本管理」创建账本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap “Ledger Management” at the top right to create a ledger"
           }
         }
       }
@@ -1027,6 +1297,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Records"
+          }
+        }
+      }
+    },
+    "记账时间" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record Time"
           }
         }
       }
@@ -1281,12 +1561,32 @@
         }
       }
     },
+    "转入账户" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To Account"
+          }
+        }
+      }
+    },
     "转出与转入账户不能相同" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Source and destination accounts cannot be the same"
+          }
+        }
+      }
+    },
+    "转出账户" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Account"
           }
         }
       }
@@ -1341,12 +1641,52 @@
         }
       }
     },
+    "退格" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete"
+          }
+        }
+      }
+    },
+    "退款入账" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refund Received"
+          }
+        }
+      }
+    },
+    "选择账户" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Account"
+          }
+        }
+      }
+    },
     "金额" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Amount"
+          }
+        }
+      }
+    },
+    "金额 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount %@"
           }
         }
       }
