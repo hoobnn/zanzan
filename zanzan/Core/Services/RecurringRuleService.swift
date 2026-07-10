@@ -71,29 +71,44 @@ struct RecurringRuleService {
 
     // MARK: - 到期物化
 
+    /// 到期物化结果：created 为本次生成的流水；skippedRules 为物化失败被跳过的规则
+    /// （uuid + 错误描述），供调用方向用户披露——否则坏规则（如引用账户被删）
+    /// 会永远静默失败，用户无感知。
+    struct MaterializeOutcome {
+        struct SkippedRule: Equatable {
+            let ruleUUID: UUID
+            let message: String
+        }
+
+        let created: [Transaction]
+        let skippedRules: [SkippedRule]
+    }
+
     /// 把所有到期规则物化为流水并推进 nextRunAt。
     /// 错过多期逐期补记（每期一笔，occurredAt 取各期应发日）；暂停/软删规则不生成。
     /// 幂等：nextRunAt 推进 + 按 (sourceID, occurredAt) 去重双保险，
     /// 重复调用（含崩溃重放）不重复生成；软删的产出也算已生成，不复活。
     @discardableResult
-    func materializeDue(asOf: Date) throws -> [Transaction] {
+    func materializeDue(asOf: Date) throws -> MaterializeOutcome {
         let dueRules = try context.fetch(
             FetchDescriptor<RecurringRule>(predicate: #Predicate {
                 !$0.isSoftDeleted && !$0.isPaused && $0.nextRunAt <= asOf
             })
         )
         var created: [Transaction] = []
+        var skipped: [MaterializeOutcome.SkippedRule] = []
         for rule in dueRules {
             // 按规则粒度容错：单条规则物化失败（如引用账户被删、外币无汇率快照）
-            // 只跳过该规则（nextRunAt 不推进，下次重试），不炸整批、不吞掉其他规则
+            // 只跳过该规则（nextRunAt 不推进，下次重试），不炸整批、不吞掉其他规则；
+            // 失败规则记入 skippedRules 向调用方披露
             do {
                 created += try materialize(rule, asOf: asOf)
             } catch {
-                continue
+                skipped.append(.init(ruleUUID: rule.uuid, message: error.localizedDescription))
             }
         }
         try context.save()
-        return created
+        return MaterializeOutcome(created: created, skippedRules: skipped)
     }
 
     // MARK: - 私有：单规则物化
@@ -119,8 +134,13 @@ struct RecurringRuleService {
             }
             due = try requiredNextOccurrence(of: schedule, after: due)
         }
-        rule.nextRunAt = due
-        rule.updatedAt = .now
+        // 无进展不回写（典型：endAt 已过的过期规则，每次都命中谓词、循环立即退出）——
+        // 回写 updatedAt 会造成每次调用都产生 CloudKit 同步噪音。不写最安静、语义最简：
+        // nextRunAt 停在最后一次推进值，过期规则空转只读不写。
+        if rule.nextRunAt != due {
+            rule.nextRunAt = due
+            rule.updatedAt = .now
+        }
         return created
     }
 

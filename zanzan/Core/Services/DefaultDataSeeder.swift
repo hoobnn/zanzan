@@ -15,7 +15,14 @@ struct DefaultDataSeeder {
         )
         guard doneCount == 0 else { return }
 
-        try LedgerService(context: context).createLedger(LedgerDraft(name: String(localized: "日常账本")))
+        // 自愈：createLedger 内部 save 与最终标记 save 之间崩溃会留下"只有账本"的半状态，
+        // 重放时跳过建账本（否则再建一本且非默认），账户/分类/标记随下方原子 save 补齐
+        let ledgerCount = try context.fetchCount(
+            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted })
+        )
+        if ledgerCount == 0 {
+            try LedgerService(context: context).createLedger(LedgerDraft(name: String(localized: "日常账本")))
+        }
 
         let cash = Account(name: String(localized: "现金"), kind: .fund)
         cash.iconKindRawValue = IconDescriptor.Kind.symbol.rawValue

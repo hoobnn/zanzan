@@ -32,6 +32,27 @@ struct DefaultDataSeederTests {
         #expect(children.count == 4)
     }
 
+    @Test func 半状态重放自愈不重复建账本() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        // 模拟"createLedger 已 save、完成标记未落"的崩溃现场
+        try LedgerService(context: context).createLedger(LedgerDraft(name: String(localized: "日常账本")))
+
+        try DefaultDataSeeder(context: context).seedIfNeeded()
+
+        let ledgers = try context.fetch(FetchDescriptor<Ledger>())
+        #expect(ledgers.count == 1) // 不再建第二本
+        #expect(ledgers.first?.isDefault == true)
+        // 账户/分类/标记随重放补齐
+        #expect(try context.fetchCount(FetchDescriptor<Account>()) == 1)
+        #expect(try context.fetch(FetchDescriptor<Category>()).contains { $0.isBuiltIn })
+        let key = DefaultDataSeeder.completionKey
+        let metas = try context.fetch(FetchDescriptor<AppMeta>(predicate: #Predicate { $0.key == key }))
+        #expect(metas.count == 1)
+        // 再跑一次仍幂等
+        try DefaultDataSeeder(context: context).seedIfNeeded()
+        #expect(try context.fetchCount(FetchDescriptor<Ledger>()) == 1)
+    }
+
     @Test func 幂等重跑不产生重复() throws {
         let context = ModelContext(try AppModelContainer.make(inMemory: true))
         let seeder = DefaultDataSeeder(context: context)

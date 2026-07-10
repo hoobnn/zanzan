@@ -122,7 +122,7 @@ struct RecurringRuleServiceTests {
     @Test func 更新规则从asOf起按新计划触发不回填过去() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 1), days: [5]))
-        let backfilled = try f.service.materializeDue(asOf: date(2026, 6, 10))
+        let backfilled = try f.service.materializeDue(asOf: date(2026, 6, 10)).created
         #expect(backfilled.count == 2) // 5/5、6/5
 
         var draft = makeDraft(f, startAt: date(2026, 5, 1), days: [20])
@@ -131,7 +131,7 @@ struct RecurringRuleServiceTests {
         #expect(rule.nextRunAt == date(2026, 6, 20)) // 新触发日，且不回填 5/20
         #expect(rule.templateAmountMinorUnits == 5_000)
 
-        let created = try f.service.materializeDue(asOf: date(2026, 6, 25))
+        let created = try f.service.materializeDue(asOf: date(2026, 6, 25)).created
         #expect(created.count == 1)
         #expect(created[0].occurredAt == date(2026, 6, 20))
         #expect(created[0].amountMinorUnits == 5_000)
@@ -156,7 +156,7 @@ struct RecurringRuleServiceTests {
         draft.templateNote = "七月房租"
         let rule = try f.service.createRule(draft)
 
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 5, hour: 10))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 5, hour: 10)).created
 
         #expect(created.count == 1)
         let tx = created[0]
@@ -176,7 +176,7 @@ struct RecurringRuleServiceTests {
     @Test func 未到期不生成() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 4))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 4)).created
         #expect(created.isEmpty)
         #expect(rule.nextRunAt == date(2026, 7, 5)) // 不推进
     }
@@ -184,7 +184,7 @@ struct RecurringRuleServiceTests {
     @Test func 错过多期逐期补记() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 1), days: [5]))
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
         #expect(created.count == 3) // 每期一笔
         #expect(created.map(\.occurredAt) == [date(2026, 5, 5), date(2026, 6, 5), date(2026, 7, 5)])
         #expect(rule.nextRunAt == date(2026, 8, 5))
@@ -198,7 +198,7 @@ struct RecurringRuleServiceTests {
         draft.templateTargetAccountID = f.card.uuid
         try f.service.createRule(draft)
 
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 5))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 5)).created
 
         #expect(created.count == 1)
         #expect(created[0].kind == .transfer)
@@ -212,8 +212,8 @@ struct RecurringRuleServiceTests {
     @Test func 重复调用不重复生成() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 1), days: [5]))
-        let first = try f.service.materializeDue(asOf: date(2026, 7, 10))
-        let second = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let first = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
+        let second = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
         #expect(first.count == 3)
         #expect(second.isEmpty)
         #expect(try transactionCount(f) == 3)
@@ -222,14 +222,14 @@ struct RecurringRuleServiceTests {
     @Test func 崩溃重放按应发日去重不产生重复() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
-        let first = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let first = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
         #expect(first.count == 1)
 
         // 模拟"流水已落库但 nextRunAt 未推进"的崩溃现场
         rule.nextRunAt = date(2026, 7, 5)
         try f.context.save()
 
-        let replay = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let replay = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
         #expect(replay.isEmpty) // (sourceID, occurredAt) 去重兜底
         #expect(try transactionCount(f) == 1)
         #expect(rule.nextRunAt == date(2026, 8, 5)) // 仍正常推进
@@ -238,12 +238,12 @@ struct RecurringRuleServiceTests {
     @Test func 软删产出后补记不复活() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
-        let first = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let first = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
         try TransactionService(context: f.context).softDeleteTransaction(uuid: first[0].uuid)
 
         rule.nextRunAt = date(2026, 7, 5) // 重走该期
         try f.context.save()
-        let replay = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let replay = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
 
         #expect(replay.isEmpty) // 用户删除即否决该期
         #expect(try transactionCount(f) == 1)
@@ -255,7 +255,7 @@ struct RecurringRuleServiceTests {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
         try f.service.pauseRule(uuid: rule.uuid)
-        let created = try f.service.materializeDue(asOf: date(2026, 8, 10))
+        let created = try f.service.materializeDue(asOf: date(2026, 8, 10)).created
         #expect(created.isEmpty)
         #expect(rule.nextRunAt == date(2026, 7, 5)) // 暂停期间不推进
     }
@@ -263,21 +263,21 @@ struct RecurringRuleServiceTests {
     @Test func 恢复跳过暂停期间错过的各期() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 5)))
-        #expect(try f.service.materializeDue(asOf: date(2026, 5, 5)).count == 1)
+        #expect(try f.service.materializeDue(asOf: date(2026, 5, 5)).created.count == 1)
 
         try f.service.pauseRule(uuid: rule.uuid)
         try f.service.resumeRule(uuid: rule.uuid, asOf: date(2026, 7, 10))
 
         #expect(!rule.isPaused)
         #expect(rule.nextRunAt == date(2026, 8, 5)) // 6/5、7/5 跳过
-        #expect(try f.service.materializeDue(asOf: date(2026, 7, 10)).isEmpty)
+        #expect(try f.service.materializeDue(asOf: date(2026, 7, 10)).created.isEmpty)
     }
 
     @Test func 软删规则不生成() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
         try f.service.softDeleteRule(uuid: rule.uuid)
-        let created = try f.service.materializeDue(asOf: date(2026, 8, 10))
+        let created = try f.service.materializeDue(asOf: date(2026, 8, 10)).created
         #expect(created.isEmpty)
         #expect(try transactionCount(f) == 0)
     }
@@ -285,7 +285,7 @@ struct RecurringRuleServiceTests {
     @Test func 截止之后不再生成() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 5), endAt: date(2026, 6, 30)))
-        let created = try f.service.materializeDue(asOf: date(2026, 9, 1))
+        let created = try f.service.materializeDue(asOf: date(2026, 9, 1)).created
         #expect(created.count == 2) // 5/5、6/5；7/5 起已过截止
         #expect(created.map(\.occurredAt) == [date(2026, 5, 5), date(2026, 6, 5)])
     }
@@ -295,7 +295,7 @@ struct RecurringRuleServiceTests {
     @Test func 月频31号短月收缩到月末() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 1, 31), days: [31]))
-        let created = try f.service.materializeDue(asOf: date(2026, 3, 31, hour: 23))
+        let created = try f.service.materializeDue(asOf: date(2026, 3, 31, hour: 23)).created
         // 2026 非闰年：1/31、2/28（收缩）、3/31
         #expect(created.map(\.occurredAt) == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)])
     }
@@ -303,7 +303,7 @@ struct RecurringRuleServiceTests {
     @Test func 短月多触发日收缩重合只生成一笔() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 2, 1), days: [30, 31]))
-        let created = try f.service.materializeDue(asOf: date(2026, 3, 31, hour: 23))
+        let created = try f.service.materializeDue(asOf: date(2026, 3, 31, hour: 23)).created
         // 2 月 30/31 同缩到 28 只记一笔；3 月恢复两笔
         #expect(created.map(\.occurredAt) == [date(2026, 2, 28), date(2026, 3, 30), date(2026, 3, 31)])
     }
@@ -312,7 +312,7 @@ struct RecurringRuleServiceTests {
         let f = try makeFixture()
         // 2026-07-06 为周一；周一(2)/周五(6) 各触发一次
         try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 6), frequency: .weekly, days: [2, 6]))
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 17, hour: 23))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 17, hour: 23)).created
         #expect(created.map(\.occurredAt) == [
             date(2026, 7, 6), date(2026, 7, 10), date(2026, 7, 13), date(2026, 7, 17),
         ])
@@ -321,14 +321,14 @@ struct RecurringRuleServiceTests {
     @Test func 月频间隔2隔月生成() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 1, 5), interval: 2))
-        let created = try f.service.materializeDue(asOf: date(2026, 5, 31))
+        let created = try f.service.materializeDue(asOf: date(2026, 5, 31)).created
         #expect(created.map(\.occurredAt) == [date(2026, 1, 5), date(2026, 3, 5), date(2026, 5, 5)])
     }
 
     @Test func 日频间隔10逐期生成() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 1), frequency: .daily, interval: 10))
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 21))
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 21)).created
         #expect(created.map(\.occurredAt) == [date(2026, 7, 1), date(2026, 7, 11), date(2026, 7, 21)])
     }
 
@@ -354,7 +354,7 @@ struct RecurringRuleServiceTests {
         }
     }
 
-    @Test func 单规则物化失败不炸整批() throws {
+    @Test func 单规则物化失败不炸整批且披露被跳过规则() throws {
         let f = try makeFixture()
         try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
         // 坏规则：外币账户模板且全库无该币种汇率快照 → 物化时 missingFxRate
@@ -362,10 +362,30 @@ struct RecurringRuleServiceTests {
         var bad = makeDraft(f, startAt: date(2026, 7, 3))
         bad.name = "美元订阅"
         bad.templateAccountID = usd.uuid
-        try f.service.createRule(bad)
+        let badRule = try f.service.createRule(bad)
+        let badNextRunAt = badRule.nextRunAt
 
-        let created = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        let outcome = try f.service.materializeDue(asOf: date(2026, 7, 10))
         // 坏规则被跳过（nextRunAt 不推进、下次重试），正常规则照常生成
-        #expect(created.map(\.occurredAt) == [date(2026, 7, 5)])
+        #expect(outcome.created.map(\.occurredAt) == [date(2026, 7, 5)])
+        // 跳过的坏规则向调用方披露，不再静默僵尸
+        #expect(outcome.skippedRules.map(\.ruleUUID) == [badRule.uuid])
+        #expect(!outcome.skippedRules[0].message.isEmpty)
+        #expect(badRule.nextRunAt == badNextRunAt) // 保持重试语义
+    }
+
+    @Test func 过期规则空转不回写不产生脏写() throws {
+        let f = try makeFixture()
+        let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 5), endAt: date(2026, 5, 31)))
+        #expect(try f.service.materializeDue(asOf: date(2026, 6, 10)).created.count == 1) // 5/5
+
+        let updatedAt = rule.updatedAt
+        let nextRunAt = rule.nextRunAt
+        let outcome = try f.service.materializeDue(asOf: date(2026, 8, 1))
+
+        #expect(outcome.created.isEmpty)
+        #expect(outcome.skippedRules.isEmpty) // 过期不是错误，不算跳过
+        #expect(rule.updatedAt == updatedAt) // 无进展不回写，避免 CloudKit 同步噪音
+        #expect(rule.nextRunAt == nextRunAt)
     }
 }

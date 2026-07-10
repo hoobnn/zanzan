@@ -43,7 +43,8 @@ struct BudgetService {
     }
 
     /// 按月物化：把该账本全部活跃模板行复制为 (year, month) 实体行。
-    /// 幂等：同维度已有活跃月度行（含用户改过额度的）一律跳过，不重复生成、不覆盖。
+    /// 幂等：同维度该月存在任意行（含软删——用户删掉月度行即否决该月）一律跳过，
+    /// 不重复生成、不覆盖、不复活（与 RecurringRuleService.hasExistingOutput 口径一致）。
     @discardableResult
     func materialize(ledgerID: UUID, year: Int, month: Int) throws -> [Budget] {
         guard (1...12).contains(month) else { throw BudgetServiceError.invalidMonth }
@@ -55,10 +56,9 @@ struct BudgetService {
         var created: [Budget] = []
         for template in templates {
             let categoryID = template.categoryID
-            let hasMonthlyRow = try activeBudget(
+            if try hasAnyMonthlyRow(
                 ledgerID: ledgerID, categoryID: categoryID, year: year, month: month
-            ) != nil
-            if hasMonthlyRow { continue }
+            ) { continue }
             let monthly = Budget(ledgerID: ledgerID, amountMinorUnits: template.amountMinorUnits)
             monthly.categoryID = categoryID
             monthly.periodYear = year
@@ -83,6 +83,18 @@ struct BudgetService {
         }
         guard category.kind == .expense else { throw BudgetServiceError.categoryNotExpense }
         guard category.parentID == nil else { throw BudgetServiceError.categoryNotTopLevel }
+    }
+
+    /// 该维度当月是否已有任意行（含软删）。物化去重专用——软删行也算"该月已否决"。
+    private func hasAnyMonthlyRow(
+        ledgerID: UUID, categoryID: UUID?, year: Int, month: Int
+    ) throws -> Bool {
+        try context.fetchCount(
+            FetchDescriptor<Budget>(predicate: #Predicate {
+                $0.ledgerID == ledgerID && $0.categoryID == categoryID
+                    && $0.periodYear == year && $0.periodMonth == month
+            })
+        ) > 0
     }
 
     private func activeBudget(

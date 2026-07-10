@@ -287,6 +287,57 @@ struct TransactionCSVImporterTests {
         #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 2)
     }
 
+    @Test func 非转账行带手续费行级报错() throws {
+        let f = try makeFixture()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,1.50,支出带手续费
+        2026-01-02,收入,10,,现金,,2,收入带手续费
+        2026-01-03,转账,100,,现金,储蓄卡,0.50,转账带手续费合法
+        """
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "a.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("应整批失败")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2, 3]) // 手续费不再被静默归零
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+    }
+
+    @Test func 半批崩溃现场undoBatch可清理且幂等() throws {
+        let f = try makeFixture()
+        // 模拟"批次行已 save、流水只落了一半、transactionCount 未回填"的崩溃现场
+        let batch = ImportBatch(fileName: "half.csv", importedAt: importedAt)
+        batch.contentHash = TransactionCSVImporter.contentHash(of: "half")
+        f.context.insert(batch)
+        try f.context.save()
+        var draft = TransactionDraft()
+        draft.kind = .expense
+        draft.amountString = "10"
+        draft.occurredAt = importedAt
+        draft.accountUUID = f.cash.uuid
+        draft.categoryUUID = f.dining.uuid
+        let tx = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
+        tx.sourceKindRawValue = TransactionSourceKind.csvImport.rawValue
+        tx.sourceID = batch.uuid
+        try f.context.save()
+
+        // 批次行先落库：崩溃后撞哈希仍可查出
+        let importer = TransactionCSVImporter(context: f.context)
+        #expect(try importer.existingBatch(withContentHash: batch.contentHash)?.uuid == batch.uuid)
+
+        try importer.undoBatch(batchUUID: batch.uuid)
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(batch.isSoftDeleted)
+
+        // 幂等：重复撤销不报错、结果不变
+        try importer.undoBatch(batchUUID: batch.uuid)
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(batch.isSoftDeleted)
+    }
+
     @Test func 撤销不存在的批次报错() throws {
         let f = try makeFixture()
         #expect(throws: TransactionCSVImportError.batchNotFound) {

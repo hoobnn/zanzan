@@ -185,6 +185,23 @@ struct BudgetServiceTests {
         #expect(monthly.amountMinorUnits == 66_600)
     }
 
+    @Test func 软删月度行后重物化不复活() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        try service.createBudget(makeDraft(env, amount: 100_000))
+        let monthly = try service.materialize(ledgerID: env.ledgerID, year: 2026, month: 7).first!
+        try service.softDeleteBudget(uuid: monthly.uuid) // 用户删掉 7 月行 = 否决该月
+
+        let again = try service.materialize(ledgerID: env.ledgerID, year: 2026, month: 7)
+
+        #expect(again.isEmpty)
+        #expect(monthly.isSoftDeleted)
+        #expect(try budgetCount(env) == 2) // 1 模板 + 1 软删月度行，不重新生成
+        // 其他月份不受影响，照常物化
+        let august = try service.materialize(ledgerID: env.ledgerID, year: 2026, month: 8)
+        #expect(august.count == 1)
+    }
+
     @Test func 软删模板不参与物化() throws {
         let env = try makeEnv()
         let service = BudgetService(context: env.context)

@@ -67,9 +67,15 @@ struct TransactionCSVImporter {
         }
         guard rowErrors.isEmpty else { throw TransactionCSVImportError.invalidRows(rowErrors) }
 
-        // 第二遍：逐笔经 TransactionService 落库（服务层二次完整校验）
+        // 第二遍：先落批次行并 save，再逐笔经 TransactionService 落库（服务层二次完整校验）。
+        // 顺序即崩溃防线：中途崩溃时批次行已可查——undoBatch 可清理半批流水，
+        // 撞哈希检测也能命中，不留 sourceID 悬空的孤儿批。
+        // recordTransaction 内部逐笔 save（TransactionService 非本切片可改），无法收敛为
+        // 批末一次事务 save；最坏崩溃窗口 = 末笔已 save 但 sourceID 赋值未随下一次 save 落盘。
         let batch = ImportBatch(fileName: fileName, importedAt: importedAt)
         batch.contentHash = Self.contentHash(of: csv)
+        context.insert(batch)
+        try context.save()
         let service = TransactionService(context: context)
         var inserted: [Transaction] = []
         do {
@@ -80,14 +86,14 @@ struct TransactionCSVImporter {
                 inserted.append(tx)
             }
         } catch {
-            // recordTransaction 逐笔 save，无事务可回滚；预校验后此处理论不可达，
-            // 兜底把已写入的半批清掉再抛（清理半批失败写入不算业务硬删除）
+            // 预校验后此处理论不可达；兜底把已写入的半批连同批次行清掉再抛
+            // （清理半批失败写入不算业务硬删除）
             for tx in inserted { context.delete(tx) }
+            context.delete(batch)
             try? context.save()
             throw error
         }
         batch.transactionCount = inserted.count
-        context.insert(batch)
         try context.save()
         return batch
     }
@@ -163,7 +169,11 @@ struct TransactionCSVImporter {
             throw TransactionCSVImportError.invalidAmount(amountString)
         }
         let trimmedFee = feeString.trimmingCharacters(in: .whitespaces)
-        if !trimmedFee.isEmpty, TransactionCSV.minorUnits(fromCSVAmount: trimmedFee) == nil {
+        // 手续费仅转账行可填（§5.4 fee 恒为转账流出）：非转账带手续费按行级错误报出，
+        // 不再被 Draft 静默归零（同 targetAmountNotAllowed 口径）
+        if kind != .transfer {
+            guard trimmedFee.isEmpty else { throw TransactionCSVImportError.feeNotAllowed }
+        } else if !trimmedFee.isEmpty, TransactionCSV.minorUnits(fromCSVAmount: trimmedFee) == nil {
             throw TransactionCSVImportError.invalidFee(feeString)
         }
 
@@ -275,6 +285,7 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
     case invalidDate(String)
     case invalidAmount(String)
     case invalidFee(String)
+    case feeNotAllowed
     case accountNotFound(String)
     case categoryNotFound(String)
     case currencyMismatch(row: String, account: String)
@@ -301,6 +312,8 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
             String(localized: "金额「\(value)」不正确（应为不含千分位的十进制数，最多两位小数）")
         case let .invalidFee(value):
             String(localized: "手续费「\(value)」不正确（应为不含千分位的十进制数，最多两位小数）")
+        case .feeNotAllowed:
+            String(localized: "仅转账行可填写手续费")
         case let .accountNotFound(name):
             String(localized: "账户「\(name)」不存在或已删除")
         case let .categoryNotFound(name):
