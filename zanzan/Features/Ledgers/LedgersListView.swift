@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// 账本管理（我的 → 账本管理）。静态谓词 @Query；写操作全走 LedgerCommands。
+/// 账本 Tab 首页（也被「我的 → 账本管理」复用）。静态谓词 @Query；写操作全走 LedgerCommands。
 struct LedgersListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
@@ -38,7 +38,7 @@ struct LedgersListView: View {
                 }
             }
         }
-        .navigationTitle("账本管理")
+        .navigationTitle("账本")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("新建账本", systemImage: "plus") { isAddingLedger = true }

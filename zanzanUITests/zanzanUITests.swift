@@ -17,9 +17,13 @@ final class zanzanUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let settingsTab = app.tabBars.buttons["我的"]
-        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
-        settingsTab.tap()
+        let assetsTab = app.tabBars.buttons["资产"]
+        XCTAssertTrue(assetsTab.waitForExistence(timeout: 5))
+        assetsTab.tap()
+
+        let settingsButton = app.buttons["我的"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.tap()
 
         let appIconLink = app.staticTexts["应用图标"]
         XCTAssertTrue(appIconLink.waitForExistence(timeout: 5))

@@ -34,16 +34,24 @@ struct AssetsHomeView: View {
         }
         .overlay {
             if accounts.isEmpty {
-                ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点左上角添加账户"))
+                ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点右上角添加账户"))
             }
         }
         .navigationTitle("资产")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("账户管理", systemImage: "ellipsis") { isShowingManagement = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("添加账户", systemImage: "plus") { isAddingAccount = true }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("账户管理", systemImage: "ellipsis") { isShowingManagement = true }
+                // ponytail: 用 NavigationLink 直推——isPresented push 的页内再做 value push 会被弹回。
+                NavigationLink {
+                    SettingsHomeView()
+                } label: {
+                    Label("我的", systemImage: "person.crop.circle")
+                }
             }
         }
         .navigationDestination(isPresented: $isShowingManagement) {

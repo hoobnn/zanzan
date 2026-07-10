@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// 明细 Tab 首页：解析当前账本（默认账本归一化）后转交列表。
+/// 记账 Tab 首页：解析当前账本（默认账本归一化）后转交列表。
 struct TransactionsHomeView: View {
     @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
     private var ledgers: [StoredLedger]
@@ -19,9 +19,9 @@ struct TransactionsHomeView: View {
             ContentUnavailableView(
                 "还没有账本",
                 systemImage: "book.closed",
-                description: Text("请到「我的 → 账本管理」创建账本")
+                description: Text("请到「账本」页创建账本")
             )
-            .navigationTitle("明细")
+            .navigationTitle("记账")
         }
     }
 }
