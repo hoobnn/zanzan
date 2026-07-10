@@ -58,12 +58,12 @@ struct AssetsHomeView: View {
             AccountsListView()
         }
         .sheet(isPresented: $isAddingAccount) {
-            AccountFormView(title: "添加账户", draft: AccountDraft()) { draft in
+            AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
                 try AccountCommands(context: modelContext).createAccount(draft)
             }
         }
         .sheet(item: $editingAccount) { account in
-            AccountFormView(title: "编辑账户", draft: AccountDraft(account: account)) { draft in
+            AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
                 try AccountCommands(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
             }
         }
@@ -78,7 +78,7 @@ struct AssetsHomeView: View {
                     Text("净资产")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Button(hidesAmounts ? "显示金额" : "隐藏金额",
+                    Button(hidesAmounts ? String(localized: "显示金额") : String(localized: "隐藏金额"),
                            systemImage: hidesAmounts ? "eye.slash.fill" : "eye.fill") {
                         hidesAmounts.toggle()
                     }
@@ -100,7 +100,7 @@ struct AssetsHomeView: View {
         }
     }
 
-    private func labeledAmount(_ title: String, _ minorUnits: Int) -> some View {
+    private func labeledAmount(_ title: LocalizedStringKey, _ minorUnits: Int) -> some View {
         HStack(spacing: 6) {
             Text(title).foregroundStyle(.tertiary)
             Text(money(minorUnits)).foregroundStyle(.secondary).monospacedDigit()
@@ -123,7 +123,7 @@ struct AssetsHomeView: View {
         }
     }
 
-    private func loanCard(_ title: String, amount: Int, symbol: String, tint: Color) -> some View {
+    private func loanCard(_ title: LocalizedStringKey, amount: Int, symbol: String, tint: Color) -> some View {
         HStack(spacing: 12) {
             Image(systemName: symbol)
                 .font(.headline)
@@ -182,13 +182,13 @@ struct AssetsHomeView: View {
         }
         .buttonStyle(.plain)
         .textCase(nil)
-        .accessibilityHint(collapsedKinds.contains(group.kind) ? "展开分组" : "折叠分组")
+        .accessibilityHint(collapsedKinds.contains(group.kind) ? String(localized: "展开分组") : String(localized: "折叠分组"))
     }
 
     private func groupSummary(_ group: AssetsOverview.Group) -> String {
-        var parts = ["余额: \(money(group.balanceTotalMinorUnits))"]
+        var parts = [String(localized: "余额: \(money(group.balanceTotalMinorUnits))")]
         if group.debtTotalMinorUnits > 0 {
-            parts.append("欠款: \(money(group.debtTotalMinorUnits))")
+            parts.append(String(localized: "欠款: \(money(group.debtTotalMinorUnits))"))
         }
         return parts.joined(separator: "  ")
     }

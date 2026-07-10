@@ -45,12 +45,12 @@ struct LedgersListView: View {
             }
         }
         .sheet(isPresented: $isAddingLedger) {
-            LedgerFormView(title: "新建账本", draft: LedgerDraft()) { draft in
+            LedgerFormView(title: String(localized: "新建账本"), draft: LedgerDraft()) { draft in
                 try LedgerCommands(context: modelContext).createLedger(draft)
             }
         }
         .sheet(item: $editingLedger) { ledger in
-            LedgerFormView(title: "编辑账本", draft: LedgerDraft(name: ledger.name, colorID: ledger.colorID)) { draft in
+            LedgerFormView(title: String(localized: "编辑账本"), draft: LedgerDraft(name: ledger.name, colorID: ledger.colorID)) { draft in
                 try LedgerCommands(context: modelContext).updateLedger(uuid: ledger.uuid, draft: draft)
             }
         }

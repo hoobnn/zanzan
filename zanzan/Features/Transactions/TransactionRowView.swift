@@ -25,11 +25,11 @@ struct TransactionRowView: View {
     private var title: String {
         switch transaction.kind {
         case .transfer:
-            "\(transaction.account?.name ?? "未知账户") → \(transaction.targetAccount?.name ?? "未知账户")"
+            "\(transaction.account?.name ?? String(localized: "未知账户")) → \(transaction.targetAccount?.name ?? String(localized: "未知账户"))"
         case .expense, .income:
-            transaction.category?.name ?? "未分类"
+            transaction.category?.name ?? String(localized: "未分类")
         case nil:
-            "未知类型"
+            String(localized: "未知类型")
         }
     }
 

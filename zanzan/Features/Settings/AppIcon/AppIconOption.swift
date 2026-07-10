@@ -1,3 +1,5 @@
+import Foundation
+
 nonisolated enum AppIconOption: String, CaseIterable, Identifiable, Sendable {
     case emerald
     case ivory
@@ -15,17 +17,17 @@ nonisolated enum AppIconOption: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .emerald: "翡翠"
-        case .ivory: "象牙白"
-        case .midnight: "深墨"
+        case .emerald: String(localized: "翡翠")
+        case .ivory: String(localized: "象牙白")
+        case .midnight: String(localized: "深墨")
         }
     }
 
     var detail: String {
         switch self {
-        case .emerald: "浅色与深色随系统外观切换"
-        case .ivory: "始终使用明亮的象牙白背景"
-        case .midnight: "始终使用沉稳的深墨色背景"
+        case .emerald: String(localized: "浅色与深色随系统外观切换")
+        case .ivory: String(localized: "始终使用明亮的象牙白背景")
+        case .midnight: String(localized: "始终使用沉稳的深墨色背景")
         }
     }
 

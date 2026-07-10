@@ -97,7 +97,7 @@ struct TransactionFormView: View {
                     Text(validationMessage).font(.footnote).foregroundStyle(.red)
                 }
             }
-            .navigationTitle(editingUUID == nil ? "记一笔" : "编辑流水")
+            .navigationTitle(editingUUID == nil ? String(localized: "记一笔") : String(localized: "编辑流水"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

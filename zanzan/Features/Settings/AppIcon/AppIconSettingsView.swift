@@ -21,7 +21,7 @@ struct AppIconSettingsView: View {
                     .buttonStyle(.plain)
                     .disabled(controller.pendingIcon != nil || !controller.supportsAlternateIcons)
                     .accessibilityLabel(option.title)
-                    .accessibilityValue(controller.selectedIcon == option ? "已选择" : "未选择")
+                    .accessibilityValue(controller.selectedIcon == option ? String(localized: "已选择") : String(localized: "未选择"))
                     .accessibilityHint("双击切换应用图标")
                 }
             } footer: {

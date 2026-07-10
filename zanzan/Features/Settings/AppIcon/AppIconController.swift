@@ -27,7 +27,7 @@ final class AppIconController {
         failure = nil
 
         guard supportsAlternateIcons else {
-            failure = AppIconChangeFailure(message: "当前设备或运行环境不支持切换应用图标。")
+            failure = AppIconChangeFailure(message: String(localized: "当前设备或运行环境不支持切换应用图标。"))
             return
         }
 

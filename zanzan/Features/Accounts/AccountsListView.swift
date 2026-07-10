@@ -50,12 +50,12 @@ struct AccountsListView: View {
             }
         }
         .sheet(isPresented: $isAddingAccount) {
-            AccountFormView(title: "添加账户", draft: AccountDraft()) { draft in
+            AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
                 try AccountCommands(context: modelContext).createAccount(draft)
             }
         }
         .sheet(item: $editingAccount) { account in
-            AccountFormView(title: "编辑账户", draft: AccountDraft(account: account)) { draft in
+            AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
                 try AccountCommands(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
             }
         }
@@ -90,7 +90,7 @@ struct AccountsListView: View {
             Button("删除", systemImage: "trash", role: .destructive) {
                 run { try AccountCommands(context: modelContext).softDeleteAccount(uuid: account.uuid) }
             }
-            Button(account.isArchived ? "取消归档" : "归档",
+            Button(account.isArchived ? String(localized: "取消归档") : String(localized: "归档"),
                    systemImage: account.isArchived ? "tray.and.arrow.up" : "archivebox") {
                 run { try AccountCommands(context: modelContext).setArchived(uuid: account.uuid, isArchived: !account.isArchived) }
             }
