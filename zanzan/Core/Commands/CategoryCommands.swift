@@ -35,6 +35,21 @@ struct CategoryCommands {
         try context.save()
     }
 
+    /// 同层重排：按传入顺序重写 sortOrder。要求全部条目活跃且同 (parentID, kind) 层。
+    func reorderCategories(orderedUUIDs: [UUID]) throws {
+        let categories = try orderedUUIDs.map(fetchActiveCategory)
+        guard let first = categories.first else { return }
+        let isSameScope = categories.allSatisfy {
+            $0.parentID == first.parentID && $0.kindRawValue == first.kindRawValue
+        }
+        guard isSameScope else { throw CategoryCommandError.reorderScopeMismatch }
+        for (index, category) in categories.enumerated() where category.sortOrder != index {
+            category.sortOrder = index
+            category.updatedAt = .now
+        }
+        try context.save()
+    }
+
     func setArchived(uuid: UUID, isArchived: Bool) throws {
         let category = try fetchActiveCategory(uuid)
         category.isArchived = isArchived

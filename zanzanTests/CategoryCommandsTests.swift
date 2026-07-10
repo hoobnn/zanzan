@@ -104,6 +104,37 @@ struct CategoryCommandsTests {
         }
     }
 
+    // MARK: - 排序
+
+    @Test func 同层重排按传入顺序写入() throws {
+        let context = try makeContext()
+        let a = try makeCategory(context, name: "餐饮")
+        let b = try makeCategory(context, name: "交通")
+        let c = try makeCategory(context, name: "购物")
+        try CategoryCommands(context: context).reorderCategories(orderedUUIDs: [c.uuid, a.uuid, b.uuid])
+        #expect(c.sortOrder == 0)
+        #expect(a.sortOrder == 1)
+        #expect(b.sortOrder == 2)
+    }
+
+    @Test func 跨层混排被拒() throws {
+        let context = try makeContext()
+        let parent = try makeCategory(context, name: "餐饮")
+        let child = try makeCategory(context, name: "早餐", parentID: parent.uuid)
+        #expect(throws: CategoryCommandError.self) {
+            try CategoryCommands(context: context).reorderCategories(orderedUUIDs: [parent.uuid, child.uuid])
+        }
+    }
+
+    @Test func 跨方向混排被拒() throws {
+        let context = try makeContext()
+        let expense = try makeCategory(context, name: "餐饮")
+        let income = try makeCategory(context, name: "工资", kind: .income)
+        #expect(throws: CategoryCommandError.self) {
+            try CategoryCommands(context: context).reorderCategories(orderedUUIDs: [income.uuid, expense.uuid])
+        }
+    }
+
     // MARK: - 归档 / 软删 / 恢复默认
 
     @Test func 归档与取消归档() throws {
