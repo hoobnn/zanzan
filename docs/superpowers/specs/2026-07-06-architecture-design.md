@@ -17,9 +17,9 @@
 zanzan/
 ├── App/                  # zanzanApp、RootView、ModelContainer 装配
 ├── Core/                 # 纯逻辑层，不 import SwiftUI
-│   ├── Models/           # 15 张 Stored* @Model、SchemaV1(VersionedSchema)、关键枚举
+│   ├── Models/           # 15 张 @Model、SchemaV1(VersionedSchema)、关键枚举
 │   ├── Scopes/           # LedgerScope / ProjectionReadScope / ModelFiltering（谓词下推）
-│   ├── Projections/      # *Projector + 页面展示模型（纯值类型）
+│   ├── Projections/      # *Provider + 页面展示模型（纯值类型）
 │   ├── Drafts/           # *Draft（入口校验 + 归一化）
 │   ├── Commands/         # *Commands（写路径、不变量、维护/重算命令）
 │   └── ImportExport/     # TransactionCSVImporter / Exporter
@@ -36,12 +36,12 @@ zanzan/
 ## 2. App 装配与数据流
 
 - `zanzanApp` 建 `ModelContainer(SchemaV1, cloudKitDatabase: .none)`，经 `.modelContainer()` 注入。开 CloudKit 时改这一处配置 + 加 entitlement。
-- **无 DI 框架**。Projector/Commands 是接收 `ModelContext` 的无状态 struct，View 就地构造。
-- 读路径：简单列表用 `@Query`；聚合/跨表走 Projector（谓词下推，见文档第 4/8 节）。
+- **无 DI 框架**。Provider/Commands 是接收 `ModelContext` 的无状态 struct，View 就地构造。
+- 读路径：简单列表用 `@Query`；聚合/跨表走 Provider（谓词下推，见文档第 4/8 节）。
 - 写路径：表单绑定 `*Draft`（校验 + 归一化）→ 提交调 `*Commands`（维护不变量与 `updatedAt`）。
 - **事务边界**：每条业务命令收尾显式 `modelContext.save()`，一条命令 = 一个事务（autosave 时机不可预测，不依赖）。
 - **关系删除规则**：全库软删无硬删除，`deleteRule` 一律保持默认 `.nullify`、禁用 `.cascade`——级联软删由 Commands 显式执行，不交给存储层。
-- Swift 6 严格并发：全 app 默认 MainActor 隔离（工程已设 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）；重计算（统计、CSV 导入）需要时再下放 `@ModelActor`，不预建。**模型实例与 `ModelContext` 不跨 actor**：跨界只传 `uuid` 到目标 context 重取；Projector 输出纯值类型展示模型，正是为了可安全跨 actor / 跨层传递。
+- Swift 6 严格并发：全 app 默认 MainActor 隔离（工程已设 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）；重计算（统计、CSV 导入）需要时再下放 `@ModelActor`，不预建。**模型实例与 `ModelContext` 不跨 actor**：跨界只传 `uuid` 到目标 context 重取；Provider 输出纯值类型展示模型，正是为了可安全跨 actor / 跨层传递。
 
 ## 3. 导航与多平台
 
@@ -66,5 +66,5 @@ zanzan/
 ## 5. 刻意不做
 
 - 不建 SPM 包 / 多 target（macOS 立项或编译变慢时再抽，迁移时机写回本文档）。
-- 无 DI 容器、无 ViewModel、无 Repository 协议抽象——Projector/Commands 就是访问层，SwiftData 不可替换也不必 mock。
+- 无 DI 容器、无 ViewModel、无 Repository 协议抽象——Provider/Commands 就是访问层，SwiftData 不可替换也不必 mock。
 - 暂无 CloudKit 开关 UI；同步开启是一次性配置变更。

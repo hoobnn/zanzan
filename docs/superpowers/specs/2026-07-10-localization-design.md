@@ -30,7 +30,7 @@
 2. **`String` 类型的展示文案**（变量、传参、拼接后再进视图的）：改为 `String(localized:)`。
 3. **Core 层**：
    - `Commands/`、`Drafts/` 的 `errorDescription` 文案 → `String(localized:)`
-   - `Projections/` 的展示文案（如 `MonthlyStatsProjector` 错误信息）→ `String(localized:)`
+   - `Projections/` 的展示文案（如 `MonthlyStatsProvider` 错误信息）→ `String(localized:)`
    - Models 层中文均为注释，无需处理。
 4. **种子数据**（`DefaultDataSeeder`）：账本名、预置分类名等全部 `String(localized:)`，播种时按系统语言落库。
 5. **不本地化清单**：

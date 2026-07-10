@@ -5,7 +5,7 @@
 ## 项目结构
 
 - `zanzan/App/`：启动、根视图、SwiftData 容器
-- `zanzan/Core/`：`Models`（`Stored*` 持久化模型）、`Drafts`（校验草稿）、`Commands`（写命令）、`Projections`（只读投影）——所有写路径走 Draft → Command，不在视图里直接改模型
+- `zanzan/Core/`：`Models`（SwiftData 持久化模型，类名即实体名，无前缀）、`Drafts`（校验草稿）、`Services`（写路径服务）、`Providers`（只读投影/查询）——所有写路径走 Draft → Service，不在视图里直接改模型
 - `zanzan/Features/<Domain>/`：按账本/账户/流水/统计/设置拆分的 SwiftUI 页面
 - `zanzan/Shared/`：跨功能工具；`zanzanTests/` 单元测试，`zanzanUITests/` UI 测试
 
@@ -29,7 +29,7 @@
 
 - 金额一律用整数最小货币单位，禁止新增浮点金额路径
 - SwiftData 上下文相关代码遵循现有 `@MainActor` 边界
-- schema 已全量就位，功能开发只做 Draft/Commands/Projector/UI 切片，不动 schema
+- schema 已全量就位，功能开发只做 Draft/Service/Provider/UI 切片，不动 schema
 - 单元测试用 Swift Testing（`@Test`/`#expect`）+ 内存容器，文件名 `<Subject>Tests.swift`；UI 测试用 XCTest；业务改动须覆盖成功路径、校验失败与软删除等边界
 
 ## 分支策略（GitHub Flow / 主干开发）
