@@ -107,6 +107,60 @@ struct TransactionListQueryTests {
         #expect(months[1].expenseTotalMinorUnits == 4_000) // 6 月
     }
 
+    @Test func 按标签筛选只命中挂该标签的流水() throws {
+        let env = try makeEnv()
+        var tagDraft = TagDraft()
+        tagDraft.name = "旅行"
+        let tag = try TagService(context: env.context).createTag(tagDraft)
+        let tagged = try record(env, day: 1)
+        try record(env, day: 2)
+        try TagService(context: env.context).attachTag(tagUUID: tag.uuid, toTransaction: tagged.uuid)
+
+        var filter = TransactionListFilter(ledgerID: env.ledgerID)
+        filter.tagUUID = tag.uuid
+        let results = try filter.fetch(in: env.context)
+        #expect(results.count == 1)
+        #expect(results[0].uuid == tagged.uuid)
+    }
+
+    @Test func 标签与类型组合筛选() throws {
+        let env = try makeEnv()
+        var tagDraft = TagDraft()
+        tagDraft.name = "报销"
+        let tag = try TagService(context: env.context).createTag(tagDraft)
+        let expense = try record(env, day: 1)
+        var incomeCategoryDraft = CategoryDraft()
+        incomeCategoryDraft.name = "工资"
+        incomeCategoryDraft.kind = .income
+        let incomeCategory = try CategoryService(context: env.context).createCategory(incomeCategoryDraft)
+        var incomeDraft = TransactionDraft()
+        incomeDraft.kind = .income
+        incomeDraft.amountString = "5000"
+        incomeDraft.accountUUID = env.accountUUID
+        incomeDraft.categoryUUID = incomeCategory.uuid
+        let income = try TransactionService(context: env.context).recordTransaction(incomeDraft, ledgerID: env.ledgerID)
+        let service = TagService(context: env.context)
+        try service.attachTag(tagUUID: tag.uuid, toTransaction: expense.uuid)
+        try service.attachTag(tagUUID: tag.uuid, toTransaction: income.uuid)
+
+        var filter = TransactionListFilter(ledgerID: env.ledgerID)
+        filter.kind = .expense
+        filter.tagUUID = tag.uuid
+        let results = try filter.fetch(in: env.context)
+        #expect(results.count == 1)
+        #expect(results[0].uuid == expense.uuid)
+    }
+
+    @Test func 无标签筛选时fetch与fetchDescriptor等价() throws {
+        let env = try makeEnv()
+        try record(env, day: 1)
+        try record(env, day: 15)
+        let filter = TransactionListFilter(ledgerID: env.ledgerID)
+        let results = try filter.fetch(in: env.context)
+        #expect(results.count == 2)
+        #expect(results[0].occurredAt > results[1].occurredAt)
+    }
+
     @Test func 不计统计流水显示但不进小计() throws {
         let env = try makeEnv()
         try record(env, amount: "10", day: 1)

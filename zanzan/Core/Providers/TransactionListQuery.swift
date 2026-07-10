@@ -10,6 +10,17 @@ struct TransactionListFilter {
     var kind: TransactionKind? = nil
     /// nil = 全部账户；命中收支账户或转账双方
     var accountUUID: UUID? = nil
+    /// nil = 全部标签；多对多关系谓词表达不了，走内存二次收窄（设计文档 §4）
+    var tagUUID: UUID? = nil
+
+    /// 谓词下推 + 标签内存筛选的统一取数入口。
+    func fetch(in context: ModelContext) throws -> [Transaction] {
+        let results = try context.fetch(fetchDescriptor())
+        guard let tagUUID else { return results }
+        return results.filter { tx in
+            tx.tags?.contains { $0.uuid == tagUUID } ?? false
+        }
+    }
 
     func fetchDescriptor() -> FetchDescriptor<Transaction> {
         FetchDescriptor<Transaction>(
