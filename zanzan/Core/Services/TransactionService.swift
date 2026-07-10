@@ -19,6 +19,7 @@ struct TransactionService {
 
     func updateTransaction(uuid: UUID, draft: TransactionDraft) throws {
         let tx = try fetchTransaction(uuid, includeDeleted: false)
+        try ensureNotInstallmentManaged(tx)
         guard tx.kind == draft.kind else { throw TransactionServiceError.kindImmutable }
         let v = try draft.validated()
         tx.amountMinorUnits = v.amountMinorUnits
@@ -30,6 +31,7 @@ struct TransactionService {
 
     func softDeleteTransaction(uuid: UUID) throws {
         let tx = try fetchTransaction(uuid, includeDeleted: false)
+        try ensureNotInstallmentManaged(tx)
         tx.isSoftDeleted = true
         tx.updatedAt = .now
         try context.save()
@@ -37,9 +39,18 @@ struct TransactionService {
 
     func undoSoftDeleteTransaction(uuid: UUID) throws {
         let tx = try fetchTransaction(uuid, includeDeleted: true)
+        try ensureNotInstallmentManaged(tx)
         tx.isSoftDeleted = false
         tx.updatedAt = .now
         try context.save()
+    }
+
+    /// 期供流水的生命周期与期数表状态强绑定，通用入口删/改/恢复会击穿分期状态机
+    /// （期卡死、进度与余额口径分叉），一律阻断，只能经 InstallmentService 操作。
+    private func ensureNotInstallmentManaged(_ tx: Transaction) throws {
+        guard tx.sourceKind != .installment else {
+            throw TransactionServiceError.managedByInstallmentPlan
+        }
     }
 
     // MARK: - 私有
@@ -107,6 +118,7 @@ enum TransactionServiceError: LocalizedError {
     case transactionNotFound
     case categoryKindMismatch
     case kindImmutable
+    case managedByInstallmentPlan
 
     var errorDescription: String? {
         switch self {
@@ -116,6 +128,7 @@ enum TransactionServiceError: LocalizedError {
         case .transactionNotFound: String(localized: "流水不存在")
         case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
         case .kindImmutable: String(localized: "流水类型不可修改，请删除后重新记一笔")
+        case .managedByInstallmentPlan: String(localized: "分期还款流水请在分期计划中操作")
         }
     }
 }

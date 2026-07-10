@@ -144,4 +144,25 @@ struct TransactionServiceTests {
         try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
         #expect(!tx.isSoftDeleted)
     }
+
+    @Test func 分期来源流水禁止通用删改恢复() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        // 模拟期供流水：生命周期归 InstallmentService 管，通用入口一律阻断
+        tx.sourceKindRawValue = TransactionSourceKind.installment.rawValue
+        try f.context.save()
+        #expect(throws: TransactionServiceError.self) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: expenseDraft(f, amount: "99"))
+        }
+        #expect(throws: TransactionServiceError.self) {
+            try commands.softDeleteTransaction(uuid: tx.uuid)
+        }
+        #expect(!tx.isSoftDeleted) // 阻断生效，流水未被删
+        tx.isSoftDeleted = true
+        try f.context.save()
+        #expect(throws: TransactionServiceError.self) {
+            try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
+        }
+    }
 }
