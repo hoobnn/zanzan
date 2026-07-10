@@ -1,0 +1,169 @@
+import Foundation
+import Testing
+@testable import zanzan
+
+@MainActor
+struct InstallmentPlanDraftTests {
+    private let firstDueAt = Date(timeIntervalSince1970: 1_786_000_000)
+
+    private func flatFeeDraft() -> InstallmentPlanDraft {
+        var draft = InstallmentPlanDraft(firstDueAt: firstDueAt)
+        draft.name = " iPhone 分期 "
+        draft.kind = .purchase
+        draft.accountID = UUID()
+        draft.ledgerID = UUID()
+        draft.principalMinorUnits = 999_900
+        draft.totalPeriods = 24
+        draft.amortizationKind = .flatFee
+        draft.flatFeePerPeriodMinorUnits = 2_500
+        return draft
+    }
+
+    @Test func 合法草稿通过并归一化() throws {
+        let v = try flatFeeDraft().validated()
+        #expect(v.name == "iPhone 分期") // trim 归一化
+        #expect(v.principalMinorUnits == 999_900)
+        #expect(v.totalPeriods == 24)
+        #expect(v.flatFeePerPeriodMinorUnits == 2_500)
+        #expect(v.annualRateBps == nil) // 固定手续费类分期年利率恒 nil（5.9）
+        #expect(v.customPeriods.isEmpty)
+    }
+
+    @Test func 名称为空被拒() throws {
+        var draft = flatFeeDraft()
+        draft.name = "   "
+        #expect(throws: InstallmentPlanDraftError.emptyName) { _ = try draft.validated() }
+    }
+
+    @Test func 缺账户或账本被拒() throws {
+        var draft = flatFeeDraft()
+        draft.accountID = nil
+        #expect(throws: InstallmentPlanDraftError.missingAccount) { _ = try draft.validated() }
+        draft = flatFeeDraft()
+        draft.ledgerID = nil
+        #expect(throws: InstallmentPlanDraftError.missingLedger) { _ = try draft.validated() }
+    }
+
+    @Test func 本金非正被拒() throws {
+        var draft = flatFeeDraft()
+        draft.principalMinorUnits = 0
+        #expect(throws: InstallmentPlanDraftError.nonPositivePrincipal) { _ = try draft.validated() }
+        draft.principalMinorUnits = -100
+        #expect(throws: InstallmentPlanDraftError.nonPositivePrincipal) { _ = try draft.validated() }
+    }
+
+    @Test func 期数小于一被拒() throws {
+        var draft = flatFeeDraft()
+        draft.totalPeriods = 0
+        #expect(throws: InstallmentPlanDraftError.invalidTotalPeriods) { _ = try draft.validated() }
+    }
+
+    @Test func 本金少于期数被拒() throws {
+        // 每期本金至少 1 分（期供流水 amount 恒正的可执行性约束）
+        var draft = flatFeeDraft()
+        draft.principalMinorUnits = 23
+        draft.totalPeriods = 24
+        #expect(throws: InstallmentPlanDraftError.principalLessThanPeriods) { _ = try draft.validated() }
+    }
+
+    @Test func 计息方式缺年利率被拒() throws {
+        for kind in [AmortizationKind.annuity, .linearPrincipal] {
+            var draft = flatFeeDraft()
+            draft.amortizationKind = kind
+            draft.annualRateBps = nil
+            #expect(throws: InstallmentPlanDraftError.missingAnnualRate) { _ = try draft.validated() }
+        }
+    }
+
+    @Test func 年利率为负被拒且为零可通过() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .annuity
+        draft.annualRateBps = -1
+        #expect(throws: InstallmentPlanDraftError.negativeAnnualRate) { _ = try draft.validated() }
+        draft.annualRateBps = 0 // 免息分期
+        let v = try draft.validated()
+        #expect(v.annualRateBps == 0)
+    }
+
+    @Test func flatFee缺手续费或为负被拒() throws {
+        var draft = flatFeeDraft()
+        draft.flatFeePerPeriodMinorUnits = nil
+        #expect(throws: InstallmentPlanDraftError.missingFlatFee) { _ = try draft.validated() }
+        draft.flatFeePerPeriodMinorUnits = -1
+        #expect(throws: InstallmentPlanDraftError.negativeFlatFee) { _ = try draft.validated() }
+        draft.flatFeePerPeriodMinorUnits = 0 // 免手续费分期合法
+        _ = try draft.validated()
+    }
+
+    @Test func 计息方式忽略无关字段() throws {
+        // 归一化：annuity 不承载固定手续费（同 TransactionDraft 非转账 fee 归零先例）
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .annuity
+        draft.annualRateBps = 1_200
+        draft.flatFeePerPeriodMinorUnits = 999
+        let v = try draft.validated()
+        #expect(v.flatFeePerPeriodMinorUnits == nil)
+        #expect(v.annualRateBps == 1_200)
+    }
+
+    @Test func 先息后本被明确阻断() throws {
+        // 5.10 interestOnly 前 n−1 期本金为 0，与 5.4 amount 恒正冲突，入口阻断
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .interestOnly
+        draft.annualRateBps = 1_200
+        #expect(throws: InstallmentPlanDraftError.interestOnlyUnsupported) { _ = try draft.validated() }
+    }
+
+    @Test func custom行数不匹配被拒() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .custom
+        draft.totalPeriods = 3
+        draft.principalMinorUnits = 10_000
+        draft.customPeriods = [.init(principalMinorUnits: 10_000, interestMinorUnits: 0)]
+        #expect(throws: InstallmentPlanDraftError.customPeriodCountMismatch) { _ = try draft.validated() }
+    }
+
+    @Test func custom本金合计不等被拒() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .custom
+        draft.totalPeriods = 2
+        draft.principalMinorUnits = 10_000
+        draft.customPeriods = [
+            .init(principalMinorUnits: 5_000, interestMinorUnits: 0),
+            .init(principalMinorUnits: 4_999, interestMinorUnits: 0),
+        ]
+        #expect(throws: InstallmentPlanDraftError.customPrincipalSumMismatch) { _ = try draft.validated() }
+    }
+
+    @Test func custom单期非法被拒() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .custom
+        draft.totalPeriods = 2
+        draft.principalMinorUnits = 10_000
+        draft.customPeriods = [
+            .init(principalMinorUnits: 10_000, interestMinorUnits: 0),
+            .init(principalMinorUnits: 0, interestMinorUnits: 0), // 零本金期不可执行
+        ]
+        #expect(throws: InstallmentPlanDraftError.invalidCustomPeriod) { _ = try draft.validated() }
+        draft.customPeriods = [
+            .init(principalMinorUnits: 5_000, interestMinorUnits: -1), // 负利息
+            .init(principalMinorUnits: 5_000, interestMinorUnits: 0),
+        ]
+        #expect(throws: InstallmentPlanDraftError.invalidCustomPeriod) { _ = try draft.validated() }
+    }
+
+    @Test func custom合法草稿照录() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .custom
+        draft.totalPeriods = 2
+        draft.principalMinorUnits = 10_000
+        draft.customPeriods = [
+            .init(principalMinorUnits: 6_000, interestMinorUnits: 30),
+            .init(principalMinorUnits: 4_000, interestMinorUnits: 20),
+        ]
+        let v = try draft.validated()
+        #expect(v.customPeriods == draft.customPeriods)
+        #expect(v.flatFeePerPeriodMinorUnits == nil)
+        #expect(v.annualRateBps == nil)
+    }
+}
