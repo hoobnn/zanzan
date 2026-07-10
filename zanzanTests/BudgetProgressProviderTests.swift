@@ -220,6 +220,64 @@ struct BudgetProgressProviderTests {
         #expect(result.categories.first!.usedMinorUnits == 72_000)
     }
 
+    // MARK: - 退款冲减（总额与分类同口径，且与月度统计三方一致）
+
+    /// 退款到账单 + 分摊行直接构造（写路径归 ReimbursementService，投影测试不依赖它）
+    @discardableResult
+    private func insertRefund(_ env: Env, original: Transaction, amount: Int, day: Int) throws -> Transaction {
+        let settlement = Transaction(
+            kind: .income, amountMinorUnits: amount,
+            occurredAt: Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: day))!,
+            ledgerID: env.ledgerID
+        )
+        settlement.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        env.context.insert(settlement)
+        env.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: settlement.uuid,
+            kind: .refund,
+            amountMinorUnits: amount
+        ))
+        try env.context.save()
+        return settlement
+    }
+
+    @Test func 退款冲减总预算与分类预算同口径且对齐月度统计() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try makeBudget(env, amount: 100_000)
+        try makeBudget(env, categoryID: food.uuid, amount: 50_000)
+        let original = try record(env, amount: "100", categoryUUID: food.uuid, day: 5) // 10_000 分
+        try insertRefund(env, original: original, amount: 3_000, day: 10)
+
+        let result = try progress(env)
+        #expect(result.total!.usedMinorUnits == 7_000)
+        #expect(result.categories.first!.usedMinorUnits == 7_000) // 分类与总额同口径
+
+        // 三方一致：月度统计总额与分类排行同为 7_000
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 7_000)
+        #expect(stats.expenseRanking.first { $0.category.uuid == food.uuid }!.totalMinorUnits == 7_000)
+    }
+
+    @Test func 不计预算原单的退款零冲减() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try makeBudget(env, amount: 100_000)
+        try makeBudget(env, categoryID: food.uuid, amount: 50_000)
+        try record(env, amount: "30", categoryUUID: food.uuid, day: 1) // 正常支出 3_000 分
+        let excluded = try record(env, amount: "70", categoryUUID: food.uuid, day: 2)
+        excluded.isExcludedFromBudget = true // 原单没计入已用
+        try env.context.save()
+        try insertRefund(env, original: excluded, amount: 2_000, day: 10)
+
+        // 对称性：没计入的不冲——总额与分类均维持 3_000，消灭单边冲减
+        let result = try progress(env)
+        #expect(result.total!.usedMinorUnits == 3_000)
+        #expect(result.categories.first!.usedMinorUnits == 3_000)
+    }
+
     @Test func 无效月份被拒() throws {
         let env = try makeEnv()
         #expect(throws: BudgetProgressError.self) {

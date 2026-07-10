@@ -120,6 +120,22 @@ struct MonthlyStatsProviderTests {
         #expect(stats.expenseRanking.isEmpty)
     }
 
+    @Test func 未知kind流水从精确统计剔除() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        let tx = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5)
+        tx.kindRawValue = "future_kind" // §4 前向兼容：语义未知整笔剔除（含 fee）
+        tx.feeMinorUnits = 50
+        try env.context.save()
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 0)
+        #expect(stats.incomeTotalMinorUnits == 0)
+        #expect(stats.feeTotalMinorUnits == 0)
+        #expect(stats.expenseRanking.isEmpty)
+    }
+
     // MARK: - 折算口径①（外币按自身汇率快照折本位币，历史口径永固）
 
     /// 直接改模型标外币（并行代理正在加 Draft 外币字段，测试不依赖在途 API）

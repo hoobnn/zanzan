@@ -26,9 +26,9 @@ struct AssetsOverview {
     let totalAssetsMinorUnits: Int
     /// 计入净资产账户的负余额绝对值之和（本位币分）
     let totalLiabilitiesMinorUnits: Int
-    /// 总借入 = 应付类欠款（余额取反后求和，本位币分）
+    /// 总借入 = 应付类欠款（只计负余额取反求和，溢缴按 0，与分组小计同口径，本位币分）
     let borrowedTotalMinorUnits: Int
-    /// 总借出 = 应收类余额之和（本位币分）
+    /// 总借出 = 应收类正余额之和（透支按 0，与分组小计同口径，本位币分）
     let lentTotalMinorUnits: Int
     /// 口径②披露：折算实际用到的「币种 → 最近流水汇率快照」（UI 标注汇率时点用）。
     /// 带默认值的 var：memberwise init 生成默认参数，既有构造点（空态占位）零改动
@@ -74,8 +74,12 @@ struct AssetsOverviewProvider {
         let totalAssets = countedItems.map(\.baseMinorUnits).filter { $0 > 0 }.reduce(0, +)
         let totalLiabilities = -countedItems.map(\.baseMinorUnits).filter { $0 < 0 }.reduce(0, +)
 
-        let borrowed = -converted.filter { $0.item.account.kind == .payable }.map(\.baseMinorUnits).reduce(0, +)
-        let lent = converted.filter { $0.item.account.kind == .receivable }.map(\.baseMinorUnits).reduce(0, +)
+        // 与分组小计同口径（裁决 9 精神）：借入只计负余额欠款（溢缴按 0）、借出只计正余额（透支按 0），
+        // 不做净额抵减，避免顶部汇总与分组小计两个数
+        let borrowed = -converted.filter { $0.item.account.kind == .payable }
+            .map(\.baseMinorUnits).filter { $0 < 0 }.reduce(0, +)
+        let lent = converted.filter { $0.item.account.kind == .receivable }
+            .map(\.baseMinorUnits).filter { $0 > 0 }.reduce(0, +)
 
         let listedItems = converted.filter { !$0.item.account.isArchived }
         let groups = AccountKind.allCases.compactMap { kind -> AssetsOverview.Group? in

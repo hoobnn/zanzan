@@ -25,6 +25,8 @@ struct MonthlyBudgetProgress {
 /// 已用额走 statsExpenseMinorUnits 自动继承口径①折算（外币按自身汇率快照折本位币）。
 /// 总预算已用 = 当月支出合计（statsExpenseMinorUnits 口径，fee 恒为流出一并计入）；
 /// 分类预算已用 = 该一级分类含全部子类的支出 rollup（fee 无分类归属，不进分类口径）。
+/// 退款到账按 RefundAdjustmentResolver 的 link 明细冲减，总额与分类同口径；
+/// 原单不计预算的退款不冲减（对称：没计入的不冲）。跨月退款打负属口径自然结果，与月度统计一致。
 /// 剔除软删流水、isExcludedFromBudget 与已报销（settled）支出。
 struct BudgetProgressProvider {
     let context: ModelContext
@@ -52,7 +54,18 @@ struct BudgetProgressProvider {
             })
         )
 
-        let totalUsed = transactions.reduce(0) { $0 + $1.statsExpenseMinorUnits }
+        // 退款冲减按 link 明细走共享助手（与月度统计分类口径一致）；
+        // 对称性：原单不计预算的（本就没计入已用）退款不得冲减——总额与分类都不冲
+        let refunds = try RefundAdjustmentResolver.adjustments(in: transactions, context: context)
+            .filter { !$0.isOriginalExcludedFromBudget }
+
+        // 总预算：退款到账的 amount 冲减改按上面 link 明细计（总额与分类同口径），
+        // 到账单只保留 statsFee（fee 恒为流出）；其余流水照旧计 statsExpense
+        let totalUsed = transactions.reduce(0) { sum, tx in
+            let isRefundSettlement = tx.kind == .income && tx.settlementKind == .refund
+            return sum + (isRefundSettlement ? tx.statsFeeMinorUnits : tx.statsExpenseMinorUnits)
+        } + refunds.reduce(0) { $0 + $1.amountMinorUnits }
+
         var usedByParent: [UUID: Int] = [:]
         for tx in transactions where tx.kind == .expense {
             // fee 无分类归属，不进分类预算；扣减用折算后 statsFeeMinorUnits 与 statsExpense 同口径，
@@ -60,6 +73,10 @@ struct BudgetProgressProvider {
             let value = tx.statsExpenseMinorUnits - tx.statsFeeMinorUnits
             guard value > 0, let category = tx.category else { continue }
             usedByParent[category.parentID ?? category.uuid, default: 0] += value
+        }
+        for refund in refunds {
+            guard let category = refund.category else { continue } // 原单无分类：只冲总额
+            usedByParent[category.parentID ?? category.uuid, default: 0] += refund.amountMinorUnits
         }
 
         var total: BudgetProgress?

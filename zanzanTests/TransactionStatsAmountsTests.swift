@@ -56,6 +56,23 @@ struct TransactionStatsAmountsTests {
         #expect(tx.statsIncomeMinorUnits == 0)
     }
 
+    // MARK: - 前向兼容（§4：语义未知从精确统计剔除）
+
+    @Test func 未知kind流水三个stats全零() {
+        let tx = makeTransaction(kind: .expense, amount: 1_000, fee: 50)
+        tx.kindRawValue = "future_kind" // 新版本写入的未知语义
+        #expect(tx.statsIncomeMinorUnits == 0)
+        #expect(tx.statsExpenseMinorUnits == 0)
+        #expect(tx.statsFeeMinorUnits == 0)
+    }
+
+    @Test func 未知settlementKind按到账单剔除不计收入() {
+        let tx = makeTransaction(kind: .income, amount: 3_000)
+        tx.settlementKindRawValue = "future_settlement" // 非空即到账单，语义未知不计收入也不冲减
+        #expect(tx.statsIncomeMinorUnits == 0)
+        #expect(tx.statsExpenseMinorUnits == 0)
+    }
+
     // MARK: - 折算口径①（外币按自身汇率快照折本位币）
 
     private func makeForeign(

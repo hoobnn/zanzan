@@ -78,6 +78,24 @@ struct AssetsOverviewProviderTests {
         #expect(overview.totalAssetsMinorUnits == 12_500)
     }
 
+    @Test func 溢缴应付账户总借入与分组小计同口径() throws {
+        let context = try makeContext()
+        let owed = Account(name: "欠同事", kind: .payable)
+        owed.initialBalanceMinorUnits = -20_000
+        let overpaid = Account(name: "溢缴花呗", kind: .payable)
+        overpaid.initialBalanceMinorUnits = 5_000 // 溢缴：正余额不抵减欠款
+        overpaid.sortOrder = 1
+        for account in [owed, overpaid] { context.insert(account) }
+        try context.save()
+
+        let overview = try AssetsOverviewProvider(context: context).overview()
+
+        #expect(overview.borrowedTotalMinorUnits == 20_000) // 非净额 15_000
+        let group = try #require(overview.groups.first { $0.kind == .payable })
+        #expect(group.debtTotalMinorUnits == 20_000) // 顶部与分组同一个数
+        #expect(group.balanceTotalMinorUnits == 5_000)
+    }
+
     // MARK: - 折算口径②（净资产按该币种全库最近快照折算）
 
     /// 直接构造外币流水（并行代理正在加 Draft 外币字段，测试不依赖在途 API）

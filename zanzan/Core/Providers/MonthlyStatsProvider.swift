@@ -27,6 +27,46 @@ struct MonthlyStats {
     let incomeRanking: [CategoryStat]
 }
 
+/// 退款冲减明细（月度统计与预算进度共享，5.4 统计口径）：
+/// 经 TransactionLink 反查原单；分摊额以原单币种计（5.5），按**原单**自身汇率快照折本位币（口径①）。
+/// 冲减额恒为负值，记入到账单所在月（与 statsExpenseMinorUnits 的总额口径同月生效）。
+struct RefundAdjustment {
+    /// 原单分类；nil 表示原单无分类（只冲总额，不进分类排行/分类预算）
+    let category: Category?
+    /// 原单不计预算：预算侧总额与分类均不得冲减（对称性，见 BudgetProgressProvider）
+    let isOriginalExcludedFromBudget: Bool
+    /// 冲减额（负值，本位币分）
+    let amountMinorUnits: Int
+}
+
+enum RefundAdjustmentResolver {
+    /// 从一批流水中挑出退款到账单并解析冲减明细。
+    /// 原单已删/查不到的 link 跳过：月度统计总额仍经到账单自身 statsExpense 冲减，
+    /// 预算侧视为不可判定不冲减（缺原单无法读 isExcludedFromBudget，宁可不低估已用）。
+    static func adjustments(in transactions: [Transaction], context: ModelContext) throws -> [RefundAdjustment] {
+        var adjustments: [RefundAdjustment] = []
+        for tx in transactions where tx.kind == .income && tx.settlementKind == .refund {
+            let settlementID = tx.uuid
+            let links = try context.fetch(FetchDescriptor<TransactionLink>(
+                predicate: #Predicate { !$0.isSoftDeleted && $0.settlementTransactionID == settlementID }
+            ))
+            for link in links {
+                let originalID = link.originalTransactionID
+                let original = try context.fetch(FetchDescriptor<Transaction>(
+                    predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == originalID }
+                )).first
+                guard let original else { continue }
+                adjustments.append(RefundAdjustment(
+                    category: original.category,
+                    isOriginalExcludedFromBudget: original.isExcludedFromBudget,
+                    amountMinorUnits: -original.statsBaseMinorUnits(link.amountMinorUnits)
+                ))
+            }
+        }
+        return adjustments
+    }
+}
+
 struct MonthlyStatsProvider {
     let context: ModelContext
 
@@ -50,37 +90,16 @@ struct MonthlyStatsProvider {
             expenseTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsExpenseMinorUnits },
             feeTotalMinorUnits: transactions.reduce(0) { $0 + $1.statsFeeMinorUnits },
             expenseRanking: ranking(
-                of: transactions, kind: .expense, adjustments: try refundAdjustments(in: transactions)
+                of: transactions, kind: .expense,
+                // 原单无分类的冲减只进总额不进排行（compactMap 剔除）
+                adjustments: try RefundAdjustmentResolver.adjustments(in: transactions, context: context)
+                    .compactMap { adj in adj.category.map { ($0, adj.amountMinorUnits) } }
             ) { $0.statsBaseMinorUnits($0.amountMinorUnits) }, // 折算后 amount（fee 无分类不进排行）
             incomeRanking: ranking(of: transactions, kind: .income) { $0.statsIncomeMinorUnits }
         )
     }
 
     // MARK: - 私有
-
-    /// 退款到账冲减对应分类支出（5.4 统计口径）：经 TransactionLink 反查原单分类，
-    /// 冲减额记入退款到账的当月（与 statsExpenseMinorUnits 的总额口径同月生效）。
-    /// 分摊额以原单币种计（5.5），故按**原单**自身汇率快照折本位币（口径①）。
-    private func refundAdjustments(
-        in transactions: [Transaction]
-    ) throws -> [(category: Category, amountMinorUnits: Int)] {
-        var adjustments: [(category: Category, amountMinorUnits: Int)] = []
-        for tx in transactions where tx.kind == .income && tx.settlementKind == .refund {
-            let settlementID = tx.uuid
-            let links = try context.fetch(FetchDescriptor<TransactionLink>(
-                predicate: #Predicate { !$0.isSoftDeleted && $0.settlementTransactionID == settlementID }
-            ))
-            for link in links {
-                let originalID = link.originalTransactionID
-                let original = try context.fetch(FetchDescriptor<Transaction>(
-                    predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == originalID }
-                )).first
-                guard let original, let category = original.category else { continue } // 原单已删/脏数据：只冲总额不进排行
-                adjustments.append((category, -original.statsBaseMinorUnits(link.amountMinorUnits)))
-            }
-        }
-        return adjustments
-    }
 
     /// 分类 rollup：二级金额汇入父类。amount 闭包区分口径——
     /// 支出排行计 amount（fee 无分类不进排行），收入排行计报销剔除后口径；
