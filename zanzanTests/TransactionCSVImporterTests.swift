@@ -26,8 +26,20 @@ struct TransactionCSVImporterTests {
         return Fixture(context: context, ledger: ledger, cash: cash, card: card, dining: dining)
     }
 
+    /// 旧 8 列格式表头（多数既有用例沿用它，本身即旧格式兼容回归）
     private let header = "日期,类型,金额,分类,账户,转入账户,手续费,备注"
+    /// 新 11 列格式表头（多币种列）
+    private let headerV2 = "日期,类型,金额,分类,账户,转入账户,手续费,备注,币种,汇率,到账金额"
     private let importedAt = TransactionCSV.dateFormatter.date(from: "2026-02-01 10:00:00")!
+
+    /// 建 USD 账户（外币行校验用）
+    private func makeUSDAccount(_ f: Fixture) throws -> Account {
+        let usd = Account(name: "美元卡", kind: .fund)
+        usd.currencyCode = "USD"
+        f.context.insert(usd)
+        try f.context.save()
+        return usd
+    }
 
     private func activeTransactionCount(_ context: ModelContext) throws -> Int {
         try context.fetchCount(FetchDescriptor<Transaction>(predicate: #Predicate { !$0.isSoftDeleted }))
@@ -62,6 +74,8 @@ struct TransactionCSVImporterTests {
         #expect(txs[1].feeMinorUnits == 50)
         // 仅日期格式按当天零点解析
         #expect(txs[1].occurredAt == TransactionCSV.shortDateFormatter.date(from: "2026-01-06"))
+        // 旧 8 列格式按 CNY 兼容读入：币种取账户（CNY），无汇率/到账金额
+        #expect(txs.allSatisfy { $0.currencyCode == "CNY" && $0.fxRateToBase == nil && $0.targetAmountMinorUnits == nil })
     }
 
     @Test func 金额精度定点解析不走Double() throws {
@@ -140,6 +154,74 @@ struct TransactionCSVImporterTests {
         } catch let TransactionCSVImportError.invalidRows(errors) {
             #expect(errors.count == 1)
             #expect(errors[0].line == 2)
+        }
+    }
+
+    // MARK: - 多币种列（币种/汇率/到账金额）
+
+    @Test func 新格式外币行与跨币种转账导入() throws {
+        let f = try makeFixture()
+        try makeUSDAccount(f)
+        let csv = """
+        \(headerV2)
+        2026-01-05 12:00:00,支出,100,餐饮,美元卡,,,午饭,USD,7.2,
+        2026-01-06 12:00:00,转账,720,,现金,美元卡,,,CNY,,100
+        2026-01-07 12:00:00,支出,10,餐饮,现金,,,,CNY,,
+        """
+        let batch = try TransactionCSVImporter(context: f.context).importTransactions(
+            csv: csv, fileName: "fx.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        let batchUUID = batch.uuid
+        let txs = try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.sourceID == batchUUID },
+            sortBy: [SortDescriptor(\.occurredAt, order: .forward)]
+        ))
+        #expect(txs.count == 3)
+        #expect(txs[0].currencyCode == "USD")
+        #expect(txs[0].fxRateToBase == Decimal(string: "7.2")!)
+        #expect(txs[1].kind == .transfer)
+        #expect(txs[1].targetAmountMinorUnits == 10_000) // 到账 $100（转入账户币种计）
+        #expect(txs[2].currencyCode == "CNY")
+        #expect(txs[2].fxRateToBase == nil)
+    }
+
+    @Test func 多币种非法行聚合报错() throws {
+        let f = try makeFixture()
+        try makeUSDAccount(f)
+        let csv = """
+        \(headerV2)
+        2026-01-01,支出,10,餐饮,美元卡,,,外币缺汇率,USD,,
+        2026-01-02,支出,10,餐饮,美元卡,,,汇率非正,USD,0,
+        2026-01-03,支出,10,餐饮,美元卡,,,汇率非法,USD,7.2e3,
+        2026-01-04,支出,10,餐饮,现金,,,币种与账户不符,USD,7.2,
+        2026-01-05,支出,10,餐饮,现金,,,本位币行带汇率,CNY,7.2,
+        2026-01-06,转账,720,,现金,美元卡,,跨币种转账缺到账金额,CNY,,
+        2026-01-07,支出,10,餐饮,现金,,,非转账带到账金额,CNY,,10
+        2026-01-08,转账,10,,现金,储蓄卡,,同币种转账带到账金额,CNY,,10
+        """
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "fx.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("应整批失败")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2, 3, 4, 5, 6, 7, 8, 9])
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+    }
+
+    @Test func 旧格式引用外币账户按币种不符阻断() throws {
+        let f = try makeFixture()
+        try makeUSDAccount(f)
+        // 旧 8 列格式按 CNY 兼容读入，但账户是 USD → 行级报币种不符（旧格式装不下外币数据）
+        let csv = header + "\n2026-01-01,支出,10,餐饮,美元卡,,,\n"
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "fx.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("应整批失败")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2])
         }
     }
 

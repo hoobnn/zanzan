@@ -3,16 +3,23 @@ import SwiftData
 
 /// CSV 列约定（数据库设计文档未规定 CSV 格式，此处自定义，导入导出共用一套）：
 ///
-///     日期,类型,金额,分类,账户,转入账户,手续费,备注
+///     日期,类型,金额,分类,账户,转入账户,手续费,备注,币种,汇率,到账金额
 ///
 /// - 编码遵循 RFC 4180：字段含逗号/引号/换行时整体加双引号，内部 `"` 写作 `""`
 /// - 日期：`yyyy-MM-dd HH:mm:ss`（设备当前时区，见 §4 日历口径；导入另接受 `yyyy-MM-dd`）
 /// - 类型：`支出` / `收入` / `转账`
 /// - 金额/手续费：十进制元字符串（如 `25.5`），**不允许千分位分隔符**；手续费为 0 时导出空串
 /// - 分类：收支必填分类名，转账留空；转入账户：仅转账填写
+/// - 币种：流水记账币种（§5.4：收支 = 账户币种，转账 = 转出方币种），空按 CNY
+/// - 汇率：`fxRateToBase` 十进制串；本位币（CNY）行恒空，外币行必填且 > 0
+/// - 到账金额：跨币种转账的转入方到账额（元串，转入账户币种计）；其余行恒空
+/// - 兼容：不含后三列的旧 8 列文件按 CNY 读入
 enum TransactionCSV {
-    static let headerColumns = ["日期", "类型", "金额", "分类", "账户", "转入账户", "手续费", "备注"]
-    static let columnCount = 8
+    /// 旧 8 列格式（多币种列上线前导出的文件，导入保持兼容）
+    static let legacyHeaderColumns = ["日期", "类型", "金额", "分类", "账户", "转入账户", "手续费", "备注"]
+    static let legacyColumnCount = 8
+    static let headerColumns = legacyHeaderColumns + ["币种", "汇率", "到账金额"]
+    static let columnCount = 11
 
     static let kindLabels: [TransactionKind: String] = [.expense: "支出", .income: "收入", .transfer: "转账"]
     static let kindByLabel: [String: TransactionKind] = ["支出": .expense, "收入": .income, "转账": .transfer]
@@ -106,6 +113,16 @@ enum TransactionCSV {
               trimmed.filter({ $0 == "." }).count <= 1 else { return nil }
         return MoneyAmount.minorUnits(fromDecimalString: trimmed)
     }
+
+    /// 严格版汇率解析：只接受 ASCII 数字与至多一个小数点（拒逗号/科学计数法等静默错值），
+    /// Decimal 定点不经 Double；汇率不是金额，小数位数不受两位限制
+    static func decimal(fromCSVRate string: String) -> Decimal? {
+        let trimmed = string.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty,
+              trimmed.allSatisfy({ ("0"..."9").contains($0) || $0 == "." }),
+              trimmed.filter({ $0 == "." }).count <= 1 else { return nil }
+        return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX"))
+    }
 }
 
 enum TransactionCSVError: LocalizedError {
@@ -137,6 +154,10 @@ struct TransactionCSVExporter {
         var lines = [TransactionCSV.headerColumns.joined(separator: ",")]
         for tx in transactions {
             guard let kind = tx.kind, let kindLabel = TransactionCSV.kindLabels[kind] else { continue }
+            // Decimal 描述即十进制串；nil（本位币行/非跨币种转账）导出为空
+            let fxRateField: String = tx.fxRateToBase.map { "\($0)" } ?? ""
+            let targetAmountField: String = tx.targetAmountMinorUnits
+                .map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
             let fields = [
                 TransactionCSV.dateFormatter.string(from: tx.occurredAt),
                 kindLabel,
@@ -146,6 +167,9 @@ struct TransactionCSVExporter {
                 tx.targetAccount?.name ?? "",
                 tx.feeMinorUnits > 0 ? MoneyAmount.decimalString(fromMinorUnits: tx.feeMinorUnits) : "",
                 tx.note,
+                tx.currencyCode,
+                fxRateField,
+                targetAmountField,
             ]
             lines.append(fields.map(TransactionCSV.escape).joined(separator: ","))
         }

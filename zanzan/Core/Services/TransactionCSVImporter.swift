@@ -34,13 +34,19 @@ struct TransactionCSVImporter {
     ) throws -> ImportBatch {
         let records = try TransactionCSV.parse(csv)
         guard let header = records.first else { throw TransactionCSVImportError.noDataRows }
-        guard header == TransactionCSV.headerColumns else { throw TransactionCSVImportError.invalidHeader }
+        // 双格式表头：11 列新格式带多币种列；旧 8 列文件按 CNY 兼容读入
+        let isLegacyFormat: Bool
+        switch header {
+        case TransactionCSV.headerColumns: isLegacyFormat = false
+        case TransactionCSV.legacyHeaderColumns: isLegacyFormat = true
+        default: throw TransactionCSVImportError.invalidHeader
+        }
         let dataRows = Array(records.dropFirst())
         guard !dataRows.isEmpty else { throw TransactionCSVImportError.noDataRows }
         try ensureActiveLedger(ledgerID)
 
-        // 名称 → uuid 查找表（仅活跃实体）。ponytail: 同名取先建的一个，重名歧义不阻断
-        let accountIDsByName = try activeAccountIDsByName()
+        // 名称 → (uuid, 币种) 查找表（仅活跃实体）。ponytail: 同名取先建的一个，重名歧义不阻断
+        let accountsByName = try activeAccountsByName()
         let categoryIDsByKey = try activeCategoryIDsByKindAndName()
 
         // 第一遍：全量逐行校验，聚合行级错误（原子策略的前提）
@@ -50,8 +56,8 @@ struct TransactionCSVImporter {
             let line = offset + 2 // 表头占第 1 行
             do {
                 validatedRows.append(try validateRow(
-                    fields, line: line,
-                    accountIDsByName: accountIDsByName, categoryIDsByKey: categoryIDsByKey
+                    fields, line: line, isLegacyFormat: isLegacyFormat,
+                    accountsByName: accountsByName, categoryIDsByKey: categoryIDsByKey
                 ))
             } catch let error as TransactionCSVImportError {
                 rowErrors.append(RowError(line: line, message: error.localizedDescription))
@@ -129,15 +135,22 @@ struct TransactionCSVImporter {
     // MARK: - 行校验
 
     private func validateRow(
-        _ fields: [String], line: Int,
-        accountIDsByName: [String: UUID], categoryIDsByKey: [String: UUID]
+        _ fields: [String], line: Int, isLegacyFormat: Bool,
+        accountsByName: [String: (uuid: UUID, currencyCode: String)],
+        categoryIDsByKey: [String: UUID]
     ) throws -> ValidatedRow {
-        guard fields.count == TransactionCSV.columnCount else {
-            throw TransactionCSVImportError.wrongColumnCount(expected: TransactionCSV.columnCount, actual: fields.count)
+        let expectedColumns = isLegacyFormat ? TransactionCSV.legacyColumnCount : TransactionCSV.columnCount
+        guard fields.count == expectedColumns else {
+            throw TransactionCSVImportError.wrongColumnCount(expected: expectedColumns, actual: fields.count)
         }
         let (dateString, kindLabel, amountString) = (fields[0], fields[1], fields[2])
         let (categoryName, accountName, targetAccountName) = (fields[3], fields[4], fields[5])
         let (feeString, note) = (fields[6], fields[7])
+        // 旧格式无多币种列，按 CNY 兼容读入（币种空、汇率空、到账金额空）
+        let currencyField = isLegacyFormat ? "" : fields[8].trimmingCharacters(in: .whitespaces)
+        let fxRateString = isLegacyFormat ? "" : fields[9].trimmingCharacters(in: .whitespaces)
+        let targetAmountString = isLegacyFormat ? "" : fields[10].trimmingCharacters(in: .whitespaces)
+        let rowCurrency = currencyField.isEmpty ? FxConversion.baseCurrencyCode : currencyField
 
         guard let kind = TransactionCSV.kindByLabel[kindLabel.trimmingCharacters(in: .whitespaces)] else {
             throw TransactionCSVImportError.unknownKind(kindLabel)
@@ -162,11 +175,24 @@ struct TransactionCSVImporter {
         draft.feeString = trimmedFee
 
         let trimmedAccountName = accountName.trimmingCharacters(in: .whitespaces)
-        guard let accountUUID = accountIDsByName[trimmedAccountName] else {
+        guard let account = accountsByName[trimmedAccountName] else {
             throw TransactionCSVImportError.accountNotFound(trimmedAccountName)
         }
-        draft.accountUUID = accountUUID
+        draft.accountUUID = account.uuid
+        // 流水币种由账户决定（§5.4：收支 = 账户币种，转账 = 转出方币种），行内不符即数据矛盾
+        guard rowCurrency == account.currencyCode else {
+            throw TransactionCSVImportError.currencyMismatch(row: rowCurrency, account: account.currencyCode)
+        }
+        // 汇率规则（§5.4）：外币行必填且 > 0；本位币行恒空（fxRateToBase 恒 nil）
+        if rowCurrency == FxConversion.baseCurrencyCode {
+            guard fxRateString.isEmpty else { throw TransactionCSVImportError.fxRateNotAllowed }
+        } else {
+            guard let rate = TransactionCSV.decimal(fromCSVRate: fxRateString), rate > 0 else {
+                throw TransactionCSVImportError.invalidFxRate(fxRateString)
+            }
+        }
 
+        var isCrossCurrencyTransfer = false
         switch kind {
         case .expense, .income:
             let trimmedCategoryName = categoryName.trimmingCharacters(in: .whitespaces)
@@ -176,11 +202,26 @@ struct TransactionCSVImporter {
             draft.categoryUUID = categoryUUID
         case .transfer:
             let trimmedTargetName = targetAccountName.trimmingCharacters(in: .whitespaces)
-            guard let targetUUID = accountIDsByName[trimmedTargetName] else {
+            guard let target = accountsByName[trimmedTargetName] else {
                 throw TransactionCSVImportError.accountNotFound(trimmedTargetName)
             }
-            draft.targetAccountUUID = targetUUID
+            draft.targetAccountUUID = target.uuid
+            isCrossCurrencyTransfer = target.currencyCode != rowCurrency
         }
+        // 到账金额规则（§5.4）：跨币种转账必填且 > 0（转入账户币种计）；其余行恒空
+        if isCrossCurrencyTransfer {
+            guard let targetAmount = TransactionCSV.minorUnits(fromCSVAmount: targetAmountString),
+                  targetAmount > 0 else {
+                throw TransactionCSVImportError.invalidTargetAmount(targetAmountString)
+            }
+        } else {
+            guard targetAmountString.isEmpty else { throw TransactionCSVImportError.targetAmountNotAllowed }
+        }
+        // 契约字段：并行切片在 TransactionDraft 新增 fxRateString / targetAmountString，
+        // validated 产出 fxRateToBase: Decimal? / targetAmountMinorUnits: Int?，此处按约定名赋值
+        draft.fxRateString = fxRateString
+        draft.targetAmountString = targetAmountString
+
         _ = try draft.validated() // Draft 侧兜底校验（金额>0、自转禁止等），错误原样上抛进行级报告
         return ValidatedRow(draft: draft)
     }
@@ -200,12 +241,12 @@ struct TransactionCSVImporter {
         guard count > 0 else { throw TransactionServiceError.ledgerNotFound }
     }
 
-    private func activeAccountIDsByName() throws -> [String: UUID] {
+    private func activeAccountsByName() throws -> [String: (uuid: UUID, currencyCode: String)] {
         let accounts = try context.fetch(
             FetchDescriptor<Account>(predicate: #Predicate { !$0.isSoftDeleted })
         )
         return accounts.reduce(into: [:]) { dict, account in
-            if dict[account.name] == nil { dict[account.name] = account.uuid }
+            if dict[account.name] == nil { dict[account.name] = (account.uuid, account.currencyCode) }
         }
     }
 
@@ -236,13 +277,18 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
     case invalidFee(String)
     case accountNotFound(String)
     case categoryNotFound(String)
+    case currencyMismatch(row: String, account: String)
+    case invalidFxRate(String)
+    case fxRateNotAllowed
+    case invalidTargetAmount(String)
+    case targetAmountNotAllowed
     case invalidRows([TransactionCSVImporter.RowError])
     case batchNotFound
 
     var errorDescription: String? {
         switch self {
         case .invalidHeader:
-            String(localized: "表头不符，应为：日期,类型,金额,分类,账户,转入账户,手续费,备注")
+            String(localized: "表头不符，应为：日期,类型,金额,分类,账户,转入账户,手续费,备注,币种,汇率,到账金额（或不含后三列的旧格式）")
         case .noDataRows:
             String(localized: "文件中没有可导入的流水行")
         case let .wrongColumnCount(expected, actual):
@@ -259,6 +305,16 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
             String(localized: "账户「\(name)」不存在或已删除")
         case let .categoryNotFound(name):
             String(localized: "分类「\(name)」不存在或方向不符")
+        case let .currencyMismatch(row, account):
+            String(localized: "币种「\(row)」与账户币种「\(account)」不符")
+        case let .invalidFxRate(value):
+            String(localized: "汇率「\(value)」不正确（外币行须为大于 0 的十进制数）")
+        case .fxRateNotAllowed:
+            String(localized: "本位币（CNY）行不应填写汇率")
+        case let .invalidTargetAmount(value):
+            String(localized: "到账金额「\(value)」不正确（跨币种转账须为大于 0 的十进制数，最多两位小数）")
+        case .targetAmountNotAllowed:
+            String(localized: "仅跨币种转账行可填写到账金额")
         case let .invalidRows(errors):
             String(localized: "\(errors.count) 行数据有误，本次导入已整批取消")
         case .batchNotFound:

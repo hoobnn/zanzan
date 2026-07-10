@@ -25,30 +25,46 @@ struct ReimbursementServiceTests {
         return Fixture(context: context, ledger: ledger, cash: cash, dining: dining)
     }
 
-    /// 直接落库一笔支出流水（绕开 Draft，聚焦报销逻辑）
+    /// 直接落库一笔支出流水（绕开 Draft，聚焦报销逻辑）；
+    /// 外币场景直接对模型赋 currencyCode/fxRateToBase（不依赖在途 Draft 新字段）
     @discardableResult
-    private func makeExpense(_ f: Fixture, amount: Int) throws -> Transaction {
+    private func makeExpense(
+        _ f: Fixture, amount: Int, account: Account? = nil, fxRateToBase: Decimal? = nil
+    ) throws -> Transaction {
         let tx = Transaction(kind: .expense, amountMinorUnits: amount, occurredAt: .now, ledgerID: f.ledger.uuid)
-        tx.account = f.cash
+        let account = account ?? f.cash
+        tx.account = account
         tx.category = f.dining
+        tx.currencyCode = account.currencyCode
+        tx.fxRateToBase = fxRateToBase
         f.context.insert(tx)
         try f.context.save()
         return tx
     }
 
-    /// 登记到账的便捷入口
+    /// 建一个外币账户（默认 USD）
+    private func makeForeignAccount(_ f: Fixture, currencyCode: String = "USD") throws -> Account {
+        let account = Account(name: "外币卡\(currencyCode)", kind: .fund)
+        account.currencyCode = currencyCode
+        f.context.insert(account)
+        try f.context.save()
+        return account
+    }
+
+    /// 登记到账的便捷入口（默认到账 CNY 现金户）
     @discardableResult
     private func settle(
         _ f: Fixture,
         kind: TransactionLinkKind = .reimbursement,
         amount: Int,
+        account: Account? = nil,
         allocations: [(Transaction, Int)]
     ) throws -> Transaction {
         try f.service.recordSettlement(
             kind: kind,
             amountMinorUnits: amount,
             occurredAt: .now,
-            accountUUID: f.cash.uuid,
+            accountUUID: (account ?? f.cash).uuid,
             ledgerID: f.ledger.uuid,
             allocations: allocations.map {
                 ReimbursementService.Allocation(originalTransactionUUID: $0.0.uuid, amountMinorUnits: $0.1)
@@ -209,6 +225,95 @@ struct ReimbursementServiceTests {
         #expect(throws: ReimbursementServiceError.self) {
             try self.settle(f, amount: 10_000, allocations: [(tx, 4_000), (tx, 4_000)]) // 重复原单
         }
+    }
+
+    // MARK: - 跨币种报销（§5.5 容差近似比较 + §5.4 到账单汇率必填）
+
+    @Test func 跨币种报销容差内通过() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        // 垫付 $100（汇率 7.2 → 折 ¥720），本位币到账 ¥715：
+        // Σ 折算分摊 72_000 ≤ 71_500 × 1.01 = 72_215，容差内放行
+        let tx = try makeExpense(f, amount: 10_000, account: usd, fxRateToBase: Decimal(string: "7.2")!)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 71_500, allocations: [(tx, 10_000)])
+
+        #expect(tx.reimbursementStatus == .settled) // 原单侧按原单币种精确覆盖：10_000 ≥ 10_000
+        #expect(settlement.currencyCode == "CNY")
+        #expect(settlement.fxRateToBase == nil) // 本位币到账恒 nil
+        let link = try #require(try activeLinks(f).first)
+        #expect(link.amountMinorUnits == 10_000) // 分摊金额以原单币种（USD 分）计
+    }
+
+    @Test func 跨币种报销超容差拒绝() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        // Σ 折算分摊 72_000 > 70_000 × 1.01 = 70_700，超容差阻断
+        let tx = try makeExpense(f, amount: 10_000, account: usd, fxRateToBase: Decimal(string: "7.2")!)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, amount: 70_000, allocations: [(tx, 10_000)])
+        }
+    }
+
+    @Test func 同币种精确比较不吃容差() throws {
+        let f = try makeFixture()
+        // 全部同币种（CNY）走精确整数比较：6_000 > 5_999 即拒，
+        // 若误走 1% 容差路径（5_999 × 1.01 ≈ 6_059）会放行——回归护栏
+        let tx = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, amount: 5_999, allocations: [(tx, 6_000)])
+        }
+    }
+
+    @Test func 跨币种原单侧超额仍精确阻断() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        // 原单侧「Σ 分摊 ≤ 原单金额」在原单币种内精确比较，不受容差影响：
+        // 分摊 10_050 > 原单 10_000（USD 分），虽在 1% 容差内也必须拒
+        let tx = try makeExpense(f, amount: 10_000, account: usd, fxRateToBase: Decimal(string: "7.2")!)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, amount: 100_000, allocations: [(tx, 10_050)])
+        }
+    }
+
+    @Test func 外币到账账户无汇率快照阻断() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        let tx = try makeExpense(f, amount: 10_000) // CNY 垫付
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        // 全库无 USD 汇率快照，FxRateProvider 预填不到 → §5.4 必填规则阻断
+        #expect(throws: ReimbursementServiceError.self) {
+            try self.settle(f, amount: 10_000, account: usd, allocations: [(tx, 10_000)])
+        }
+    }
+
+    @Test func 外币到账单汇率经快照预填() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        let rate = Decimal(string: "7.2")!
+        // 垫付单本身即 USD 最近汇率快照；同为 USD 的到账走精确比较
+        let tx = try makeExpense(f, amount: 10_000, account: usd, fxRateToBase: rate)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 10_000, account: usd, allocations: [(tx, 10_000)])
+
+        #expect(settlement.currencyCode == "USD")
+        #expect(settlement.fxRateToBase == rate) // 经 FxRateProvider 最近快照预填
+        #expect(tx.reimbursementStatus == .settled)
+    }
+
+    @Test func 外币原单缺汇率按1比1兜底() throws {
+        let f = try makeFixture()
+        let usd = try makeForeignAccount(f)
+        // 历史坏数据：外币原单无 fxRateToBase → 折算按 1:1 兜底，
+        // 折算分摊 10_000 ≤ 10_000 × 1.01 通过
+        let tx = try makeExpense(f, amount: 10_000, account: usd, fxRateToBase: nil)
+        try f.service.markAwaitingReimbursement(transactionUUID: tx.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(tx, 10_000)])
+        #expect(settlement.settlementKind == .reimbursement)
+        #expect(tx.reimbursementStatus == .settled)
     }
 
     // MARK: - 解除关联与状态回退

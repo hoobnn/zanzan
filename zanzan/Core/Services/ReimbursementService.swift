@@ -6,8 +6,8 @@ import SwiftData
 /// 经 TransactionLink 一行一次分摊建 M:N 关联；waiting → settled 由分摊覆盖驱动，
 /// 解除关联自动回退。不变量：单张原单 Σ 分摊 ≤ 原单金额；单笔到账单 Σ 分摊 ≤ 到账金额。
 struct ReimbursementService {
-    /// 一次分摊：到账单对某张原单的分摊金额（分，以原单币种计）。
-    /// ponytail: MVP 锁 CNY 直接同币种比较；跨币种按 fxRateToBase 折算 + 容差留待多币种切片。
+    /// 一次分摊：到账单对某张原单的分摊金额（分，**以原单币种计**——
+    /// §5.5 TransactionLink.amountMinorUnits 口径，报销进度只对原单有意义）。
     struct Allocation {
         let originalTransactionUUID: UUID
         let amountMinorUnits: Int
@@ -75,15 +75,23 @@ struct ReimbursementService {
         guard Set(originalIDs).count == originalIDs.count else {
             throw ReimbursementServiceError.invalidAllocation
         }
-        let allocationTotal = allocations.reduce(0) { $0 + $1.amountMinorUnits }
-        guard allocationTotal <= amountMinorUnits else {
-            throw ReimbursementServiceError.allocationExceedsSettlement
-        }
-
         try ensureActiveLedger(ledgerID)
         let account = try fetchActiveAccount(accountUUID)
 
+        // 到账单汇率（§5.4）：到账账户非 CNY 时 fxRateToBase 必填——经 FxRateProvider
+        // 最近快照预填，无快照阻断；CNY 恒 nil
+        let settlementCurrency = account.currencyCode
+        var settlementFxRate: Decimal?
+        if settlementCurrency != FxConversion.baseCurrencyCode {
+            guard let rate = try FxRateProvider(context: context).rate(for: settlementCurrency),
+                  rate > 0 else {
+                throw ReimbursementServiceError.missingSettlementFxRate
+            }
+            settlementFxRate = rate
+        }
+
         // 校验各原单：支出单、报销须已标记垫付、累计分摊不超原单金额
+        // （「单张原单 Σ 分摊 ≤ 原单金额」始终在原单币种内精确比较，不受跨币种影响，§5.5）
         var originals: [Transaction] = []
         for allocation in allocations {
             let original = try fetchActiveTransaction(allocation.originalTransactionUUID)
@@ -100,12 +108,34 @@ struct ReimbursementService {
             originals.append(original)
         }
 
+        // 「Σ 分摊 ≤ 到账金额」（§5.5）：全部同币种时保持精确整数比较（零行为变化）；
+        // 涉及跨币种（垫付外币、本位币到账等）时各方按自身 fxRateToBase 折本位币，
+        // 近似比较：Σ 折算分摊 ≤ 折算到账 × (1 + reimbursementToleranceRatio)
+        let allocationTotal = allocations.reduce(0) { $0 + $1.amountMinorUnits }
+        if originals.allSatisfy({ $0.currencyCode == settlementCurrency }) {
+            guard allocationTotal <= amountMinorUnits else {
+                throw ReimbursementServiceError.allocationExceedsSettlement
+            }
+        } else {
+            let convertedAllocationTotal = zip(originals, allocations).reduce(0) { sum, pair in
+                sum + FxConversion.toBaseMinorUnits(pair.1.amountMinorUnits, rate: baseRate(of: pair.0))
+            }
+            let convertedSettlement = FxConversion.toBaseMinorUnits(
+                amountMinorUnits, rate: settlementFxRate ?? 1
+            )
+            let upperBound = Decimal(convertedSettlement) * (1 + FxConversion.reimbursementToleranceRatio)
+            guard Decimal(convertedAllocationTotal) <= upperBound else {
+                throw ReimbursementServiceError.allocationExceedsSettlement
+            }
+        }
+
         // 到账单：income，不挂分类（统计口径由投影器剔除/冲减，见 Transaction+StatsAmounts）
         let settlement = Transaction(
             kind: .income, amountMinorUnits: amountMinorUnits, occurredAt: occurredAt, ledgerID: ledgerID
         )
         settlement.account = account
-        settlement.currencyCode = account.currencyCode // MVP 全 CNY；fxRateToBase 恒 nil
+        settlement.currencyCode = settlementCurrency // 收支币种 = 账户币种（§5.4）
+        settlement.fxRateToBase = settlementFxRate // 非 CNY 必填（上方已校验），CNY 恒 nil
         settlement.note = note
         settlement.settlementKindRawValue = kind.rawValue
         context.insert(settlement)
@@ -168,6 +198,13 @@ struct ReimbursementService {
     }
 
     // MARK: - 私有
+
+    /// 流水折本位币所用汇率：CNY 恒 1；外币取记账时快照，快照缺失（历史坏数据，
+    /// §5.4 本应由命令层强制非空）按 1:1 兜底——口径同 FxRateProvider「无快照按 1:1 折算」约定
+    private func baseRate(of tx: Transaction) -> Decimal {
+        guard tx.currencyCode != FxConversion.baseCurrencyCode else { return 1 }
+        return tx.fxRateToBase ?? 1
+    }
 
     /// 按 Σ 分摊覆盖情况推进/回退原单状态：全额覆盖 → settled，否则 waiting。
     /// 未标记垫付的原单（退款原单）不参与状态机。
@@ -237,6 +274,7 @@ enum ReimbursementServiceError: LocalizedError {
     case allocationExceedsOriginal
     case allocationExceedsSettlement
     case notSettlement
+    case missingSettlementFxRate
 
     var errorDescription: String? {
         switch self {
@@ -255,6 +293,7 @@ enum ReimbursementServiceError: LocalizedError {
         case .allocationExceedsOriginal: String(localized: "累计分摊金额超过了原支出金额")
         case .allocationExceedsSettlement: String(localized: "分摊合计超过了到账金额")
         case .notSettlement: String(localized: "该流水不是报销或退款到账单")
+        case .missingSettlementFxRate: String(localized: "外币到账账户缺少汇率快照，请先记一笔该币种流水")
         }
     }
 }
