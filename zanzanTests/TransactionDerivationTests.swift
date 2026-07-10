@@ -29,6 +29,14 @@ struct TransactionDerivationTests {
         #expect(txn.balanceDeltaMinorUnits(for: UUID()) == 0) // 无关账户
     }
 
+    @Test func 收入余额口径扣手续费() {
+        let account = StoredAccount(name: "卡", kind: .fund)
+        let txn = makeTransaction(kind: .income, amount: 5000)
+        txn.account = account
+        txn.feeMinorUnits = 100 // fee 恒为流出：income delta = amount − fee
+        #expect(txn.balanceDeltaMinorUnits(for: account.uuid) == 4900)
+    }
+
     @Test func 转账余额口径转出含费转入按到账金额() {
         let source = StoredAccount(name: "招行", kind: .fund)
         let target = StoredAccount(name: "美元户", kind: .fund)
