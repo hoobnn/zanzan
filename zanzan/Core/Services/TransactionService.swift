@@ -11,8 +11,9 @@ struct TransactionService {
     func recordTransaction(_ draft: TransactionDraft, ledgerID: UUID) throws -> Transaction {
         let v = try draft.validated()
         try ensureActiveLedger(ledgerID)
+        let resolved = try resolve(v, previous: nil)
         let tx = Transaction(kind: v.kind, amountMinorUnits: v.amountMinorUnits, occurredAt: v.occurredAt, ledgerID: ledgerID)
-        try apply(v, to: tx)
+        assign(v, resolved, to: tx)
         context.insert(tx)
         try context.save()
         return tx
@@ -23,9 +24,11 @@ struct TransactionService {
         try ensureNotInstallmentManaged(tx)
         guard tx.kind == draft.kind else { throw TransactionServiceError.kindImmutable }
         let v = try draft.validated()
+        // 先全量解析校验、再统一赋值——避免抛错前污染上下文（同 calibrateBalance 纪律）
+        let resolved = try resolve(v, previous: tx)
         tx.amountMinorUnits = v.amountMinorUnits
         tx.occurredAt = v.occurredAt
-        try apply(v, to: tx)
+        assign(v, resolved, to: tx)
         tx.updatedAt = .now
         try context.save()
     }
@@ -56,41 +59,71 @@ struct TransactionService {
 
     // MARK: - 私有
 
-    private func apply(_ v: TransactionDraft.Validated, to tx: Transaction) throws {
-        let account = try fetchActiveAccount(v.accountUUID)
-        tx.note = v.note
-        tx.account = account
-        tx.currencyCode = account.currencyCode // 收支 = 账户币种；转账 = 转出方币种（§5.4）
-        tx.fxRateToBase = try resolvedFxRate(currencyCode: account.currencyCode, draftRate: v.fxRateToBase)
-        tx.feeMinorUnits = v.feeMinorUnits
-        switch v.kind {
-        case .expense, .income:
-            let category = try fetchActiveCategory(v.categoryUUID!)
-            guard category.kind == v.kind else { throw TransactionServiceError.categoryKindMismatch }
-            tx.category = category
-            tx.targetAccount = nil
-            tx.targetAmountMinorUnits = nil
-        case .transfer:
-            let targetAccount = try fetchActiveAccount(v.targetAccountUUID!)
-            tx.targetAccount = targetAccount
-            tx.category = nil
-            if targetAccount.currencyCode == account.currencyCode {
-                tx.targetAmountMinorUnits = nil // 同币种转账强制归 nil（§5.4）
-            } else {
-                // 跨币种转账到账金额强制非空（转入方币种计）
-                guard let targetAmount = v.targetAmountMinorUnits else {
-                    throw TransactionServiceError.missingTargetAmount
-                }
-                tx.targetAmountMinorUnits = targetAmount
-            }
-        }
+    /// 落库前解析产物：全部查库/校验在此完成，赋值阶段不再抛错
+    private struct Resolved {
+        let account: Account
+        let category: Category?
+        let targetAccount: Account?
+        let fxRateToBase: Decimal?
+        let targetAmountMinorUnits: Int?
     }
 
-    /// §5.4 汇率必填规则：本位币恒 nil（草稿给了也归 nil）；
-    /// 外币强制非空——草稿未给则经 FxRateProvider 预填最近快照，仍无则抛错。
-    private func resolvedFxRate(currencyCode: String, draftRate: Decimal?) throws -> Decimal? {
+    private func resolve(_ v: TransactionDraft.Validated, previous: Transaction?) throws -> Resolved {
+        let account = try fetchActiveAccount(v.accountUUID)
+        var category: Category?
+        var targetAccount: Account?
+        var targetAmount: Int?
+        switch v.kind {
+        case .expense, .income:
+            let found = try fetchActiveCategory(v.categoryUUID!)
+            guard found.kind == v.kind else { throw TransactionServiceError.categoryKindMismatch }
+            category = found
+        case .transfer:
+            let target = try fetchActiveAccount(v.targetAccountUUID!)
+            targetAccount = target
+            if target.currencyCode == account.currencyCode {
+                targetAmount = nil // 同币种转账强制归 nil（§5.4）
+            } else if let explicit = v.targetAmountMinorUnits {
+                targetAmount = explicit
+            } else if let previous,
+                      previous.currencyCode == account.currencyCode,
+                      previous.targetAccount?.currencyCode == target.currencyCode,
+                      let kept = previous.targetAmountMinorUnits {
+                targetAmount = kept // 编辑未换币种对：保留原到账金额
+            } else {
+                // 跨币种转账到账金额强制非空（转入方币种计）
+                throw TransactionServiceError.missingTargetAmount
+            }
+        }
+        let fxRate = try resolvedFxRate(
+            currencyCode: account.currencyCode, draftRate: v.fxRateToBase, previous: previous
+        )
+        return Resolved(
+            account: account, category: category, targetAccount: targetAccount,
+            fxRateToBase: fxRate, targetAmountMinorUnits: targetAmount
+        )
+    }
+
+    private func assign(_ v: TransactionDraft.Validated, _ r: Resolved, to tx: Transaction) {
+        tx.note = v.note
+        tx.account = r.account
+        tx.currencyCode = r.account.currencyCode // 收支 = 账户币种；转账 = 转出方币种（§5.4）
+        tx.fxRateToBase = r.fxRateToBase
+        tx.feeMinorUnits = v.feeMinorUnits
+        tx.category = r.category
+        tx.targetAccount = r.targetAccount
+        tx.targetAmountMinorUnits = r.targetAmountMinorUnits
+    }
+
+    /// §5.4 汇率必填规则：本位币恒 nil（草稿给了也归 nil）；外币强制非空——
+    /// 草稿显式给则用之；编辑未换币种则保留流水既有快照（§4 口径①历史永固，
+    /// 禁止被最近快照静默改写）；新记且无快照可预填时抛错。
+    private func resolvedFxRate(currencyCode: String, draftRate: Decimal?, previous: Transaction?) throws -> Decimal? {
         guard currencyCode != FxConversion.baseCurrencyCode else { return nil }
         if let draftRate { return draftRate }
+        if let previous, previous.currencyCode == currencyCode, let kept = previous.fxRateToBase {
+            return kept
+        }
         guard let snapshot = try FxRateProvider(context: context).rate(for: currencyCode) else {
             throw TransactionServiceError.missingFxRate
         }

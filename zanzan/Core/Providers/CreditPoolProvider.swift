@@ -6,6 +6,8 @@ struct CreditPoolOverview {
     let pool: CreditPool
     /// 池已用 = Σ 活跃成员卡欠款；溢缴款不释放池额度（裁决 9：正余额卡按欠款 0 计）
     let usedMinorUnits: Int
+    /// 币种与池不符的成员卡（写路径不变量被旁路时的读路径兜底：剔除聚合并披露，绝不静默混币相加）
+    var currencyMismatchedMemberUUIDs: Set<UUID> = []
 
     var totalLimitMinorUnits: Int { pool.totalLimitMinorUnits }
     /// 池可用 = max(0, 总额度 − 池已用)
@@ -29,11 +31,20 @@ struct CreditPoolProvider {
             )
         )
         let balanceProvider = AccountBalanceProvider(context: context)
-        // 归档卡余额与统计照常（§4 归档语义），已用额度同样计入
-        let used = try members.reduce(0) { sum, member in
-            sum + max(0, -(try balanceProvider.balanceMinorUnits(of: member)))
+        // 归档卡余额与统计照常（§4 归档语义），已用额度同样计入；
+        // 币种与池不符的成员剔除聚合并披露，不把外币分当池币种分相加
+        var used = 0
+        var mismatched: Set<UUID> = []
+        for member in members {
+            guard member.currencyCode == pool.currencyCode else {
+                mismatched.insert(member.uuid)
+                continue
+            }
+            used += try max(0, -balanceProvider.balanceMinorUnits(of: member))
         }
-        return CreditPoolOverview(pool: pool, usedMinorUnits: used)
+        return CreditPoolOverview(
+            pool: pool, usedMinorUnits: used, currencyMismatchedMemberUUIDs: mismatched
+        )
     }
 }
 

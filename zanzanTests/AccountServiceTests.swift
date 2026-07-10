@@ -216,6 +216,23 @@ struct AccountServiceTests {
         #expect(account.currencyCode == "USD")
     }
 
+    @Test func 池内账户禁改币种() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        var draft = AccountDraft()
+        draft.name = "池内信用卡"
+        draft.kind = .credit
+        let account = try commands.createAccount(draft)
+        account.creditPoolID = UUID() // 模拟已绑定授信池
+        try context.save()
+
+        draft.currencyCode = "USD" // 零流水也不许改：会破坏「成员币种与池一致」不变量（§5.8）
+        #expect(throws: AccountServiceError.self) {
+            try commands.updateAccount(uuid: account.uuid, draft: draft)
+        }
+        #expect(account.currencyCode == "CNY")
+    }
+
     // MARK: - 外币校准
 
     private func makeUSDAccountWithLedger(context: ModelContext) throws -> Account {

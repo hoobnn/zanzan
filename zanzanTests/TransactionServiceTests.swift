@@ -298,4 +298,51 @@ struct TransactionServiceTests {
             try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
         }
     }
+
+    @Test func 编辑不换币种保留历史汇率快照() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        let commands = TransactionService(context: f.context)
+        var first = expenseDraft(f)
+        first.accountUUID = usd.uuid
+        first.fxRateString = "7.0"
+        first.occurredAt = .now.addingTimeInterval(-7_200)
+        let old = try commands.recordTransaction(first, ledgerID: f.ledger.uuid)
+        var newer = expenseDraft(f)
+        newer.accountUUID = usd.uuid
+        newer.fxRateString = "7.3" // 库内最近快照变成 7.3
+        _ = try commands.recordTransaction(newer, ledgerID: f.ledger.uuid)
+
+        // 编辑旧流水只改备注（草稿无汇率）：历史快照不得被最近快照静默改写（§4 口径①）
+        var edit = expenseDraft(f)
+        edit.accountUUID = usd.uuid
+        edit.note = "只改备注"
+        edit.occurredAt = old.occurredAt
+        try commands.updateTransaction(uuid: old.uuid, draft: edit)
+        #expect(old.fxRateToBase == Decimal(string: "7.0"))
+        #expect(old.note == "只改备注")
+    }
+
+    @Test func 编辑校验失败不污染上下文() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        let commands = TransactionService(context: f.context)
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = "100"
+        draft.accountUUID = f.cash.uuid
+        draft.targetAccountUUID = f.card.uuid
+        let tx = try commands.recordTransaction(draft, ledgerID: f.ledger.uuid)
+
+        // 改成跨币种但不给到账金额：必须抛错，且任何字段不得被半改（先校验后赋值）
+        var bad = draft
+        bad.amountString = "999"
+        bad.targetAccountUUID = usd.uuid
+        #expect(throws: TransactionServiceError.self) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: bad)
+        }
+        #expect(tx.amountMinorUnits == 10_000)
+        #expect(tx.targetAccount?.uuid == f.card.uuid)
+        #expect(tx.targetAmountMinorUnits == nil)
+    }
 }

@@ -42,6 +42,10 @@ struct TransactionFormView: View {
             draft.feeString = transaction.feeMinorUnits == 0
                 ? ""
                 : MoneyAmount.decimalString(fromMinorUnits: transaction.feeMinorUnits)
+            // 回填汇率/到账金额：编辑不得让历史快照被最近快照静默改写（§4 口径①）
+            draft.fxRateString = transaction.fxRateToBase.map { "\($0)" } ?? ""
+            draft.targetAmountString = transaction.targetAmountMinorUnits
+                .map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
         }
         _draft = State(initialValue: draft)
         _expression = State(initialValue: AmountExpression(decimalString: draft.amountString))

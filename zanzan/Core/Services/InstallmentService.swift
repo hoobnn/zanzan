@@ -302,6 +302,13 @@ struct InstallmentService {
         amountMinorUnits: Int, feeMinorUnits: Int, fromAccountID: UUID,
         plan: InstallmentPlan, note: String, occurredAt: Date
     ) throws -> Transaction {
+        // 期表金额以债务账户币种计，跨币种还款的到账金额无法从期表派生——
+        // 明确阻断（而非让 TransactionService 抛误导性的 missingTargetAmount）
+        let fromAccount = try fetchActiveAccount(fromAccountID)
+        let debtAccount = try fetchActiveAccount(plan.accountID)
+        guard fromAccount.currencyCode == debtAccount.currencyCode else {
+            throw InstallmentServiceError.crossCurrencyRepaymentUnsupported
+        }
         var draft = TransactionDraft()
         draft.kind = .transfer
         draft.amountString = MoneyAmount.decimalString(fromMinorUnits: amountMinorUnits)
@@ -396,6 +403,7 @@ enum InstallmentServiceError: LocalizedError, Equatable {
     case negativePenalty
     case infeasibleSchedule
     case invalidDueDate
+    case crossCurrencyRepaymentUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -414,6 +422,7 @@ enum InstallmentServiceError: LocalizedError, Equatable {
         case .negativePenalty: String(localized: "结清违约金不能为负")
         case .infeasibleSchedule: String(localized: "期数表生成失败：本息拆分不成立")
         case .invalidDueDate: String(localized: "无法推算应还日期")
+        case .crossCurrencyRepaymentUnsupported: String(localized: "还款账户需与分期账户同币种")
         }
     }
 }

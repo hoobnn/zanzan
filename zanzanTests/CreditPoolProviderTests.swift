@@ -78,6 +78,23 @@ struct CreditPoolProviderTests {
         #expect(overview.usedMinorUnits == 10_000)
     }
 
+    @Test func 混币成员剔除聚合并披露() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let pool = CreditPool(name: "招商银行", totalLimitMinorUnits: 100_000)
+        context.insert(pool)
+        let cny = makeMemberCard(context: context, pool: pool, name: "人民币卡")
+        addExpense(context: context, account: cny, amount: 30_000)
+        // 写路径不变量被旁路（如离线合并）产生的混币成员：读路径必须剔除并披露，不静默混加
+        let usd = makeMemberCard(context: context, pool: pool, name: "美元卡")
+        usd.currencyCode = "USD"
+        addExpense(context: context, account: usd, amount: 50_000)
+        try context.save()
+
+        let overview = try CreditPoolProvider(context: context).overview(poolUUID: pool.uuid)
+        #expect(overview.usedMinorUnits == 30_000)
+        #expect(overview.currencyMismatchedMemberUUIDs == [usd.uuid])
+    }
+
     @Test func 查询软删池抛错() throws {
         let context = ModelContext(try AppModelContainer.make(inMemory: true))
         let pool = CreditPool(name: "招商银行", totalLimitMinorUnits: 100_000)

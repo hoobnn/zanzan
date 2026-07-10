@@ -331,4 +331,41 @@ struct RecurringRuleServiceTests {
         let created = try f.service.materializeDue(asOf: date(2026, 7, 21))
         #expect(created.map(\.occurredAt) == [date(2026, 7, 1), date(2026, 7, 11), date(2026, 7, 21)])
     }
+
+    // MARK: - 多币种边界
+
+    private func makeUSDAccount(_ f: Fixture) throws -> Account {
+        let usd = Account(name: "美元卡", kind: .fund)
+        usd.currencyCode = "USD"
+        f.context.insert(usd)
+        try f.context.save()
+        return usd
+    }
+
+    @Test func 跨币种转账模板被拒() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        var draft = makeDraft(f, startAt: date(2026, 7, 1))
+        draft.templateKind = .transfer
+        draft.templateCategoryID = nil
+        draft.templateTargetAccountID = usd.uuid // 现金(CNY) → 美元卡，跨币种
+        #expect(throws: RecurringRuleServiceError.self) {
+            try f.service.createRule(draft)
+        }
+    }
+
+    @Test func 单规则物化失败不炸整批() throws {
+        let f = try makeFixture()
+        try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 5)))
+        // 坏规则：外币账户模板且全库无该币种汇率快照 → 物化时 missingFxRate
+        let usd = try makeUSDAccount(f)
+        var bad = makeDraft(f, startAt: date(2026, 7, 3))
+        bad.name = "美元订阅"
+        bad.templateAccountID = usd.uuid
+        try f.service.createRule(bad)
+
+        let created = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        // 坏规则被跳过（nextRunAt 不推进、下次重试），正常规则照常生成
+        #expect(created.map(\.occurredAt) == [date(2026, 7, 5)])
+    }
 }

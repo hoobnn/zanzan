@@ -24,6 +24,10 @@ struct AccountService {
         let account = try fetchActiveAccount(uuid)
         // 已有流水（含软删，恢复后口径仍须一致）禁改币种——历史流水币种语义不可漂移
         if v.currencyCode != account.currencyCode {
+            // 池内成员卡改币种会破坏「成员币种与池一致」不变量（§5.8），须先解绑
+            guard account.creditPoolID == nil else {
+                throw AccountServiceError.currencyLockedByCreditPool
+            }
             let referenceCount = try context.fetchCount(
                 FetchDescriptor<Transaction>(predicate: #Predicate {
                     $0.account?.uuid == uuid || $0.targetAccount?.uuid == uuid
@@ -143,6 +147,7 @@ enum AccountServiceError: LocalizedError {
     case hasActiveTransactions
     case noLedgerAvailable
     case currencyImmutable
+    case currencyLockedByCreditPool
     case missingFxRate
 
     var errorDescription: String? {
@@ -152,6 +157,7 @@ enum AccountServiceError: LocalizedError {
         case .hasActiveTransactions: String(localized: "账户名下还有流水，无法删除；可先归档或转移流水")
         case .noLedgerAvailable: String(localized: "没有可用账本，无法生成校准流水")
         case .currencyImmutable: String(localized: "账户已有流水，币种不可修改")
+        case .currencyLockedByCreditPool: String(localized: "账户在授信池内，需先解绑才能修改币种")
         case .missingFxRate: String(localized: "该币种暂无汇率快照，请提供汇率或先记一笔带汇率的流水")
         }
     }

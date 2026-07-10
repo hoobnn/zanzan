@@ -379,6 +379,22 @@ struct InstallmentServiceTests {
         #expect(period.settledTransactionID == nil)
     }
 
+    @Test func 跨币种还款账户被明确阻断() throws {
+        let f = try makeFixture()
+        let usd = Account(name: "美元卡", kind: .fund)
+        usd.currencyCode = "USD"
+        f.context.insert(usd)
+        try f.context.save()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        // 期表以债务账户币种计，跨币种还款给明确错误而非误导性的缺到账金额
+        #expect(throws: InstallmentServiceError.crossCurrencyRepaymentUnsupported) {
+            _ = try service.settlePeriod(
+                planUUID: plan.uuid, periodIndex: 1, fromAccountID: usd.uuid, at: date(2026, 8, 10)
+            )
+        }
+    }
+
     @Test func 撤销末期使completed计划回到active() throws {
         let f = try makeFixture()
         let service = InstallmentService(context: f.context)

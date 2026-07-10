@@ -84,7 +84,13 @@ struct RecurringRuleService {
         )
         var created: [Transaction] = []
         for rule in dueRules {
-            created += try materialize(rule, asOf: asOf)
+            // 按规则粒度容错：单条规则物化失败（如引用账户被删、外币无汇率快照）
+            // 只跳过该规则（nextRunAt 不推进，下次重试），不炸整批、不吞掉其他规则
+            do {
+                created += try materialize(rule, asOf: asOf)
+            } catch {
+                continue
+            }
         }
         try context.save()
         return created
@@ -268,9 +274,13 @@ struct RecurringRuleService {
     /// 模板引用校验：账本/账户活跃、分类活跃且方向匹配、标签全部存在且活跃。
     private func validateTemplateReferences(_ v: RecurringRuleDraft.Validated) throws {
         try ensureActiveLedger(v.templateLedgerID)
-        try ensureActiveAccount(v.templateAccountID)
+        let account = try ensureActiveAccount(v.templateAccountID)
         if let targetID = v.templateTargetAccountID {
-            try ensureActiveAccount(targetID)
+            let target = try ensureActiveAccount(targetID)
+            // 跨币种转账模板暂不支持：到账金额每期随汇率浮动，模板无法预先承载（§5.4）
+            guard target.currencyCode == account.currencyCode else {
+                throw RecurringRuleServiceError.crossCurrencyTransferTemplateUnsupported
+            }
         }
         if let categoryID = v.templateCategoryID {
             let descriptor = FetchDescriptor<Category>(
@@ -296,11 +306,15 @@ struct RecurringRuleService {
         guard count > 0 else { throw RecurringRuleServiceError.ledgerNotFound }
     }
 
-    private func ensureActiveAccount(_ uuid: UUID) throws {
-        let count = try context.fetchCount(
-            FetchDescriptor<Account>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid })
+    @discardableResult
+    private func ensureActiveAccount(_ uuid: UUID) throws -> Account {
+        let descriptor = FetchDescriptor<Account>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
         )
-        guard count > 0 else { throw RecurringRuleServiceError.accountNotFound }
+        guard let account = try context.fetch(descriptor).first else {
+            throw RecurringRuleServiceError.accountNotFound
+        }
+        return account
     }
 
     private func fetchActiveRule(_ uuid: UUID) throws -> RecurringRule {
@@ -339,6 +353,7 @@ enum RecurringRuleServiceError: LocalizedError {
     case categoryKindMismatch
     case tagNotFound
     case noOccurrenceBeforeEnd
+    case crossCurrencyTransferTemplateUnsupported
     case unsupportedRule
     case corruptRule
     case scheduleComputeFailed
@@ -352,6 +367,7 @@ enum RecurringRuleServiceError: LocalizedError {
         case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
         case .tagNotFound: String(localized: "标签不存在或已删除")
         case .noOccurrenceBeforeEnd: String(localized: "截止时间之前没有任何触发日")
+        case .crossCurrencyTransferTemplateUnsupported: String(localized: "周期计划暂不支持跨币种转账")
         case .unsupportedRule: String(localized: "该周期计划由更高版本创建，请升级 App 后操作")
         case .corruptRule: String(localized: "周期计划数据异常，请删除后重建")
         case .scheduleComputeFailed: String(localized: "无法计算下次触发时间，请检查计划设置")
