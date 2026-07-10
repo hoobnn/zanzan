@@ -294,4 +294,88 @@ struct AccountServiceTests {
         try commands.setArchived(uuid: account.uuid, isArchived: false)
         #expect(!account.isArchived)
     }
+
+    // MARK: - 软删引用检查 / 撤销恢复
+
+    private func makeAccount(_ context: ModelContext, name: String = "现金") throws -> Account {
+        var draft = AccountDraft()
+        draft.name = name
+        return try AccountService(context: context).createAccount(draft)
+    }
+
+    @Test func 有周期规则引用阻断删除() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let payer = try makeAccount(context, name: "付款卡")
+        let target = try makeAccount(context, name: "转入卡")
+        let rule = RecurringRule(
+            name: "定投", frequency: .monthly, startAt: .now, nextRunAt: .now,
+            templateKind: .transfer, templateAmountMinorUnits: 100
+        )
+        rule.templateAccountID = payer.uuid
+        rule.templateTargetAccountID = target.uuid
+        context.insert(rule)
+        try context.save()
+        #expect(throws: AccountServiceError.self) { try commands.softDeleteAccount(uuid: payer.uuid) }
+        #expect(throws: AccountServiceError.self) { try commands.softDeleteAccount(uuid: target.uuid) }
+    }
+
+    @Test func 有分期计划引用阻断删除() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccount(context, name: "信用卡")
+        let plan = InstallmentPlan(
+            name: "手机分期", kind: .purchase, accountID: account.uuid, ledgerID: UUID(),
+            principalMinorUnits: 120_000, totalPeriods: 12, amortizationKind: .flatFee, firstDueAt: .now
+        )
+        context.insert(plan)
+        try context.save()
+        #expect(throws: AccountServiceError.self) { try commands.softDeleteAccount(uuid: account.uuid) }
+    }
+
+    @Test func 撤销软删恢复账户并只级联恢复删除时软删的快照() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccount(context)
+        // 删除前已失效的快照（§5.13 invalidateSnapshots 产物）：不得随恢复复活
+        let staleSnapshot = BalanceSnapshot(accountID: account.uuid, snapshotAt: .now, balanceMinorUnits: 999)
+        staleSnapshot.isSoftDeleted = true
+        staleSnapshot.updatedAt = Date(timeIntervalSinceNow: -3_600)
+        context.insert(staleSnapshot)
+        let liveSnapshot = BalanceSnapshot(accountID: account.uuid, snapshotAt: .now, balanceMinorUnits: 1_000)
+        context.insert(liveSnapshot)
+        try context.save()
+        try commands.softDeleteAccount(uuid: account.uuid)
+        #expect(liveSnapshot.isSoftDeleted) // 删除级联
+        try commands.undoSoftDeleteAccount(uuid: account.uuid)
+        #expect(!account.isSoftDeleted)
+        #expect(!liveSnapshot.isSoftDeleted) // 级联恢复
+        #expect(staleSnapshot.isSoftDeleted) // 失效快照不复活
+    }
+
+    @Test func 恢复时授信池已删则解绑() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccount(context, name: "信用卡")
+        let pool = CreditPool(name: "招行池", totalLimitMinorUnits: 1_000_000)
+        context.insert(pool)
+        account.creditPoolID = pool.uuid
+        try context.save()
+        try commands.softDeleteAccount(uuid: account.uuid)
+        pool.isSoftDeleted = true // 池删只解绑活跃成员卡，已删账户错过级联
+        try context.save()
+        try commands.undoSoftDeleteAccount(uuid: account.uuid)
+        #expect(!account.isSoftDeleted)
+        #expect(account.creditPoolID == nil)
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let context = try makeContext()
+        let commands = AccountService(context: context)
+        let account = try makeAccount(context)
+        try commands.softDeleteAccount(uuid: account.uuid)
+        try commands.undoSoftDeleteAccount(uuid: account.uuid)
+        try commands.undoSoftDeleteAccount(uuid: account.uuid)
+        #expect(!account.isSoftDeleted)
+    }
 }

@@ -102,6 +102,16 @@ struct CreditPoolService {
         try context.save()
     }
 
+    /// 撤销软删（§4 撤销恢复按相反方向执行）：仅恢复池本身。幂等：重复恢复无副作用。
+    /// ponytail: 软删时成员卡已解绑且未留绑定记录，无法回滚重绑——恢复后成员为空，
+    /// 由用户手动重新绑卡；需自动回绑可将来在 Account 加「解绑来源池」标记
+    func undoSoftDeletePool(uuid: UUID) throws {
+        let pool = try fetchPool(uuid, includeDeleted: true)
+        pool.isSoftDeleted = false
+        pool.updatedAt = .now
+        try context.save()
+    }
+
     /// 绑定成员卡：仅 credit 类、币种与池一致；一卡至多一池，重复绑定即改绑。
     func bindCard(accountUUID: UUID, toPool poolUUID: UUID) throws {
         let pool = try fetchActivePool(poolUUID)
@@ -124,10 +134,14 @@ struct CreditPoolService {
     // MARK: - 私有
 
     private func fetchActivePool(_ uuid: UUID) throws -> CreditPool {
-        let descriptor = FetchDescriptor<CreditPool>(
-            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
-        )
-        guard let pool = try context.fetch(descriptor).first else {
+        try fetchPool(uuid, includeDeleted: false)
+    }
+
+    private func fetchPool(_ uuid: UUID, includeDeleted: Bool) throws -> CreditPool {
+        let predicate: Predicate<CreditPool> = includeDeleted
+            ? #Predicate { $0.uuid == uuid }
+            : #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
+        guard let pool = try context.fetch(FetchDescriptor<CreditPool>(predicate: predicate)).first else {
             throw CreditPoolServiceError.poolNotFound
         }
         return pool

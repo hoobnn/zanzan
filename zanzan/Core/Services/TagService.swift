@@ -48,6 +48,16 @@ struct TagService {
         try context.save()
     }
 
+    /// 撤销软删（§4 撤销恢复按相反方向执行）：同库已有活跃同名标签则阻断
+    /// （恢复不得破坏唯一性）。幂等：重复恢复无副作用（查重排除自身）。
+    func undoSoftDeleteTag(uuid: UUID) throws {
+        let tag = try fetchTag(uuid, includeDeleted: true)
+        try ensureUniqueName(tag.name, ledgerID: tag.ledgerID, excluding: uuid)
+        tag.isSoftDeleted = false
+        tag.updatedAt = .now
+        try context.save()
+    }
+
     // MARK: - 流水挂/摘标签
 
     /// 幂等：已挂同一标签直接返回。归档/软删标签不可挂，跨账本标签不可挂。
@@ -101,10 +111,14 @@ struct TagService {
     }
 
     private func fetchActiveTag(_ uuid: UUID) throws -> Tag {
-        let descriptor = FetchDescriptor<Tag>(
-            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
-        )
-        guard let tag = try context.fetch(descriptor).first else {
+        try fetchTag(uuid, includeDeleted: false)
+    }
+
+    private func fetchTag(_ uuid: UUID, includeDeleted: Bool) throws -> Tag {
+        let predicate: Predicate<Tag> = includeDeleted
+            ? #Predicate { $0.uuid == uuid }
+            : #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
+        guard let tag = try context.fetch(FetchDescriptor<Tag>(predicate: predicate)).first else {
             throw TagServiceError.tagNotFound
         }
         return tag

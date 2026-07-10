@@ -42,6 +42,36 @@ struct BudgetService {
         try context.save()
     }
 
+    /// 撤销软删（§4 撤销恢复按相反方向执行）：恢复前校验引用活跃（账本/分类）
+    /// 与维度唯一性（同维度已有活跃行则阻断），违例不落任何改动。
+    func undoSoftDeleteBudget(uuid: UUID) throws {
+        let budget = try fetchBudget(uuid, includeDeleted: true)
+        guard budget.isSoftDeleted else { return } // 幂等：已活跃即无事可做
+        try ensureActiveLedger(budget.ledgerID)
+        try validateCategory(budget.categoryID)
+        guard try activeBudget(
+            ledgerID: budget.ledgerID, categoryID: budget.categoryID,
+            year: budget.periodYear, month: budget.periodMonth
+        ) == nil else { throw BudgetServiceError.duplicateBudget }
+        budget.isSoftDeleted = false
+        budget.updatedAt = .now
+        try context.save()
+    }
+
+    /// 主实体（账本/分类）恢复时级联恢复其名下软删预算行（§4 撤销恢复按相反方向执行）。
+    /// 不 save，随调用方业务写一并提交（invalidateSnapshots 同款约定）。
+    /// ponytail: 无删除来源标记，无法区分「主实体级联软删的行」与「用户此前手动删的行」，
+    /// 全部尝试恢复（restoreSettlement 同款天花板，需精确可将来在 Budget 加删除来源标记）；
+    /// 靠两道守卫兜住不变量：引用账本/分类须活跃、同维度已有活跃行则跳过（updatedAt 新者优先）。
+    static func restoreSoftDeletedBudgets(_ budgets: [Budget], context: ModelContext) throws {
+        for budget in budgets.sorted(by: { $0.updatedAt > $1.updatedAt }) where budget.isSoftDeleted {
+            guard try isReferenceActive(budget, context: context),
+                  try !hasActiveRow(inDimensionOf: budget, context: context) else { continue }
+            budget.isSoftDeleted = false
+            budget.updatedAt = .now
+        }
+    }
+
     /// 按月物化：把该账本全部活跃模板行复制为 (year, month) 实体行。
     /// 幂等：同维度该月存在任意行（含软删——用户删掉月度行即否决该月）一律跳过，
     /// 不重复生成、不覆盖、不复活（与 RecurringRuleService.hasExistingOutput 口径一致）。
@@ -71,6 +101,40 @@ struct BudgetService {
     }
 
     // MARK: - 私有
+
+    /// 级联恢复守卫一：预算引用的账本活跃、分类（若有）活跃。
+    private static func isReferenceActive(_ budget: Budget, context: ModelContext) throws -> Bool {
+        let ledgerID = budget.ledgerID
+        let ledgerCount = try context.fetchCount(
+            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == ledgerID })
+        )
+        guard ledgerCount > 0 else { return false }
+        guard let categoryID = budget.categoryID else { return true }
+        return try context.fetchCount(
+            FetchDescriptor<Category>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == categoryID })
+        ) > 0
+    }
+
+    /// 级联恢复守卫二：同维度是否已有活跃行（含本轮循环里刚恢复的，上下文内可见）。
+    private static func hasActiveRow(inDimensionOf budget: Budget, context: ModelContext) throws -> Bool {
+        let ledgerID = budget.ledgerID
+        let categoryID = budget.categoryID
+        let year = budget.periodYear
+        let month = budget.periodMonth
+        return try context.fetchCount(
+            FetchDescriptor<Budget>(predicate: #Predicate {
+                !$0.isSoftDeleted && $0.ledgerID == ledgerID && $0.categoryID == categoryID
+                    && $0.periodYear == year && $0.periodMonth == month
+            })
+        ) > 0
+    }
+
+    private func ensureActiveLedger(_ uuid: UUID) throws {
+        let count = try context.fetchCount(
+            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid })
+        )
+        guard count > 0 else { throw BudgetServiceError.ledgerNotFound }
+    }
 
     /// 分类预算校验：分类存在且活跃、支出侧、一级（设计文档 5.7）。
     private func validateCategory(_ categoryID: UUID?) throws {
@@ -110,10 +174,14 @@ struct BudgetService {
     }
 
     private func fetchActiveBudget(_ uuid: UUID) throws -> Budget {
-        let descriptor = FetchDescriptor<Budget>(
-            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
-        )
-        guard let budget = try context.fetch(descriptor).first else {
+        try fetchBudget(uuid, includeDeleted: false)
+    }
+
+    private func fetchBudget(_ uuid: UUID, includeDeleted: Bool) throws -> Budget {
+        let predicate: Predicate<Budget> = includeDeleted
+            ? #Predicate { $0.uuid == uuid }
+            : #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
+        guard let budget = try context.fetch(FetchDescriptor<Budget>(predicate: predicate)).first else {
             throw BudgetServiceError.budgetNotFound
         }
         return budget
@@ -122,6 +190,7 @@ struct BudgetService {
 
 enum BudgetServiceError: LocalizedError {
     case budgetNotFound
+    case ledgerNotFound
     case categoryNotFound
     case categoryNotExpense
     case categoryNotTopLevel
@@ -131,6 +200,7 @@ enum BudgetServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .budgetNotFound: String(localized: "预算不存在或已删除")
+        case .ledgerNotFound: String(localized: "账本不存在或已删除")
         case .categoryNotFound: String(localized: "预算分类不存在或已删除")
         case .categoryNotExpense: String(localized: "只有支出分类可以设置预算")
         case .categoryNotTopLevel: String(localized: "预算只能设在一级分类上，子分类金额会汇入父类")

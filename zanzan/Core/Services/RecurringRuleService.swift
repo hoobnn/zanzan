@@ -69,6 +69,19 @@ struct RecurringRuleService {
         try context.save()
     }
 
+    /// 撤销软删（§4 撤销恢复按相反方向执行）：恢复前校验模板引用全部活跃，违例阻断；
+    /// nextRunAt 从 asOf 起重算（与 resumeRule 同口径），不补删除期间错过的期
+    /// （删除即用户明示不要生成）。isPaused 保持删除前状态。幂等：重复恢复无副作用。
+    func undoSoftDeleteRule(uuid: UUID, asOf: Date) throws {
+        let rule = try fetchRule(uuid, includeDeleted: true)
+        try ensureTemplateReferencesActive(of: rule)
+        guard let schedule = Schedule(rule: rule) else { throw RecurringRuleServiceError.unsupportedRule }
+        rule.isSoftDeleted = false
+        rule.nextRunAt = try requiredFirstOccurrence(of: schedule, onOrAfter: max(rule.startAt, asOf))
+        rule.updatedAt = .now
+        try context.save()
+    }
+
     // MARK: - 到期物化
 
     /// 到期物化结果：created 为本次生成的流水；skippedRules 为物化失败被跳过的规则
@@ -321,6 +334,25 @@ struct RecurringRuleService {
         }
     }
 
+    /// 落库规则的模板引用活跃性校验（恢复场景）：账本/账户/转入方/分类须活跃；
+    /// 软删标签物化时自然脱落（activeTags），不阻断恢复。
+    private func ensureTemplateReferencesActive(of rule: RecurringRule) throws {
+        guard let ledgerID = rule.templateLedgerID, let accountID = rule.templateAccountID else {
+            throw RecurringRuleServiceError.corruptRule
+        }
+        try ensureActiveLedger(ledgerID)
+        try ensureActiveAccount(accountID)
+        if let targetID = rule.templateTargetAccountID {
+            try ensureActiveAccount(targetID)
+        }
+        if let categoryID = rule.templateCategoryID {
+            let count = try context.fetchCount(FetchDescriptor<Category>(
+                predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == categoryID }
+            ))
+            guard count > 0 else { throw RecurringRuleServiceError.categoryNotFound }
+        }
+    }
+
     private func ensureActiveLedger(_ uuid: UUID) throws {
         let count = try context.fetchCount(
             FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid })
@@ -340,10 +372,14 @@ struct RecurringRuleService {
     }
 
     private func fetchActiveRule(_ uuid: UUID) throws -> RecurringRule {
-        let descriptor = FetchDescriptor<RecurringRule>(
-            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
-        )
-        guard let rule = try context.fetch(descriptor).first else {
+        try fetchRule(uuid, includeDeleted: false)
+    }
+
+    private func fetchRule(_ uuid: UUID, includeDeleted: Bool) throws -> RecurringRule {
+        let predicate: Predicate<RecurringRule> = includeDeleted
+            ? #Predicate { $0.uuid == uuid }
+            : #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
+        guard let rule = try context.fetch(FetchDescriptor<RecurringRule>(predicate: predicate)).first else {
             throw RecurringRuleServiceError.ruleNotFound
         }
         return rule

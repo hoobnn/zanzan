@@ -222,4 +222,118 @@ struct CategoryServiceTests {
             try CategoryService(context: context).updateCategory(uuid: category.uuid, draft: draft)
         }
     }
+
+    // MARK: - 软删引用检查 / 撤销恢复
+
+    @Test func 有周期规则引用阻断删除() throws {
+        let context = try makeContext()
+        let category = try makeCategory(context, name: "餐饮")
+        let rule = RecurringRule(
+            name: "房租", frequency: .monthly, startAt: .now, nextRunAt: .now,
+            templateKind: .expense, templateAmountMinorUnits: 100
+        )
+        rule.templateCategoryID = category.uuid
+        context.insert(rule)
+        try context.save()
+        #expect(throws: CategoryServiceError.self) {
+            try CategoryService(context: context).softDeleteCategory(uuid: category.uuid)
+        }
+    }
+
+    @Test func 删除分类级联软删其预算行() throws {
+        let context = try makeContext()
+        let category = try makeCategory(context, name: "餐饮")
+        let ledgerID = UUID()
+        let template = Budget(ledgerID: ledgerID, amountMinorUnits: 100_000)
+        template.categoryID = category.uuid
+        let monthly = Budget(ledgerID: ledgerID, amountMinorUnits: 100_000)
+        monthly.categoryID = category.uuid
+        monthly.periodYear = 2_026
+        monthly.periodMonth = 7
+        context.insert(template)
+        context.insert(monthly)
+        try context.save()
+        try CategoryService(context: context).softDeleteCategory(uuid: category.uuid)
+        #expect(category.isSoftDeleted)
+        #expect(template.isSoftDeleted)
+        #expect(monthly.isSoftDeleted)
+    }
+
+    @Test func 撤销软删恢复分类并级联恢复预算行() throws {
+        let context = try makeContext()
+        let commands = CategoryService(context: context)
+        let category = try makeCategory(context, name: "餐饮")
+        let ledger = try LedgerService(context: context).createLedger(LedgerDraft(name: "日常"))
+        let budget = Budget(ledgerID: ledger.uuid, amountMinorUnits: 100_000)
+        budget.categoryID = category.uuid
+        context.insert(budget)
+        try context.save()
+        try commands.softDeleteCategory(uuid: category.uuid)
+        try commands.undoSoftDeleteCategory(uuid: category.uuid)
+        #expect(!category.isSoftDeleted)
+        #expect(!budget.isSoftDeleted)
+    }
+
+    @Test func 父分类已删时恢复子分类被阻断() throws {
+        let context = try makeContext()
+        let commands = CategoryService(context: context)
+        let parent = try makeCategory(context, name: "餐饮")
+        let child = try makeCategory(context, name: "早餐", parentID: parent.uuid)
+        try commands.softDeleteCategory(uuid: child.uuid)
+        try commands.softDeleteCategory(uuid: parent.uuid)
+        #expect(throws: CategoryServiceError.self) {
+            try commands.undoSoftDeleteCategory(uuid: child.uuid)
+        }
+        #expect(child.isSoftDeleted)
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let context = try makeContext()
+        let commands = CategoryService(context: context)
+        let category = try makeCategory(context, name: "餐饮")
+        try commands.softDeleteCategory(uuid: category.uuid)
+        try commands.undoSoftDeleteCategory(uuid: category.uuid)
+        try commands.undoSoftDeleteCategory(uuid: category.uuid)
+        #expect(!category.isSoftDeleted)
+    }
+
+    // MARK: - 恢复默认分类的父指针修复
+
+    @Test func 恢复默认分类重挂种子默认父类() throws {
+        let context = try makeContext()
+        try DefaultDataSeeder(context: context).seedIfNeeded()
+        let breakfastName = String(localized: "早餐")
+        let breakfast = try context.fetch(
+            FetchDescriptor<Category>(predicate: #Predicate { $0.isBuiltIn && $0.name == breakfastName })
+        ).first!
+        // 模拟历史坏数据：曾被挂到用户分类下、该分类又被删（parentID 悬空）
+        breakfast.parentID = UUID()
+        breakfast.isSoftDeleted = true
+        try context.save()
+        try CategoryService(context: context).restoreDefaultCategories()
+        let diningName = String(localized: "餐饮")
+        let dining = try context.fetch(
+            FetchDescriptor<Category>(predicate: #Predicate {
+                $0.isBuiltIn && $0.name == diningName && $0.parentID == nil
+            })
+        ).first!
+        #expect(!breakfast.isSoftDeleted)
+        #expect(breakfast.parentID == dining.uuid)
+    }
+
+    @Test func 恢复默认分类定不到默认父类升为顶级() throws {
+        let context = try makeContext()
+        try DefaultDataSeeder(context: context).seedIfNeeded()
+        let breakfastName = String(localized: "早餐")
+        let breakfast = try context.fetch(
+            FetchDescriptor<Category>(predicate: #Predicate { $0.isBuiltIn && $0.name == breakfastName })
+        ).first!
+        breakfast.name = "用户改过名" // 改名后种子树定位不到默认父类
+        breakfast.parentID = UUID()
+        breakfast.isSoftDeleted = true
+        try context.save()
+        try CategoryService(context: context).restoreDefaultCategories()
+        #expect(!breakfast.isSoftDeleted)
+        #expect(breakfast.parentID == nil)
+    }
 }

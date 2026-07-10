@@ -388,4 +388,39 @@ struct RecurringRuleServiceTests {
         #expect(rule.updatedAt == updatedAt) // 无进展不回写，避免 CloudKit 同步噪音
         #expect(rule.nextRunAt == nextRunAt)
     }
+
+    // MARK: - 撤销恢复
+
+    @Test func 撤销软删从asOf重算下次触发不补期() throws {
+        let f = try makeFixture()
+        let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 1), days: [5]))
+        try f.service.softDeleteRule(uuid: rule.uuid)
+        try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: date(2026, 9, 1))
+        #expect(!rule.isSoftDeleted)
+        #expect(rule.nextRunAt == date(2026, 9, 5)) // 删除期间的 7/5、8/5 不补
+        let outcome = try f.service.materializeDue(asOf: date(2026, 9, 5))
+        #expect(outcome.created.map(\.occurredAt) == [date(2026, 9, 5)])
+    }
+
+    @Test func 引用账户已删阻断恢复() throws {
+        let f = try makeFixture()
+        let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 1), days: [5]))
+        try f.service.softDeleteRule(uuid: rule.uuid)
+        // 规则已软删不再算活跃引用，账户可删；随后恢复规则应被引用校验阻断
+        try AccountService(context: f.context).softDeleteAccount(uuid: f.cash.uuid)
+        #expect(throws: RecurringRuleServiceError.accountNotFound) {
+            try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: date(2026, 9, 1))
+        }
+        #expect(rule.isSoftDeleted)
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let f = try makeFixture()
+        let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 1), days: [5]))
+        try f.service.softDeleteRule(uuid: rule.uuid)
+        try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: date(2026, 9, 1))
+        try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: date(2026, 9, 1))
+        #expect(!rule.isSoftDeleted)
+        #expect(rule.nextRunAt == date(2026, 9, 5))
+    }
 }

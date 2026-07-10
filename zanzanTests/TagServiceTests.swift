@@ -231,4 +231,37 @@ struct TagServiceTests {
         try service.detachTag(tagUUID: tag.uuid, fromTransaction: tx.uuid) // 幂等
         #expect(tx.tags?.isEmpty ?? true)
     }
+
+    // MARK: - 撤销恢复
+
+    @Test func 撤销软删恢复标签() throws {
+        let context = try makeContext()
+        let service = TagService(context: context)
+        let tag = try makeTag(context, name: "旅行")
+        try service.softDeleteTag(uuid: tag.uuid)
+        try service.undoSoftDeleteTag(uuid: tag.uuid)
+        #expect(!tag.isSoftDeleted)
+    }
+
+    @Test func 同库活跃重名阻断恢复() throws {
+        let context = try makeContext()
+        let service = TagService(context: context)
+        let tag = try makeTag(context, name: "旅行")
+        try service.softDeleteTag(uuid: tag.uuid)
+        try makeTag(context, name: "旅行") // 删除期间新建了同名标签
+        #expect(throws: TagServiceError.duplicateName) {
+            try service.undoSoftDeleteTag(uuid: tag.uuid)
+        }
+        #expect(tag.isSoftDeleted)
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let context = try makeContext()
+        let service = TagService(context: context)
+        let tag = try makeTag(context, name: "旅行")
+        try service.softDeleteTag(uuid: tag.uuid)
+        try service.undoSoftDeleteTag(uuid: tag.uuid)
+        try service.undoSoftDeleteTag(uuid: tag.uuid) // 查重排除自身，不误伤
+        #expect(!tag.isSoftDeleted)
+    }
 }

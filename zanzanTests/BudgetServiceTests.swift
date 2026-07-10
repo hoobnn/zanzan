@@ -217,4 +217,65 @@ struct BudgetServiceTests {
             try BudgetService(context: env.context).materialize(ledgerID: env.ledgerID, year: 2026, month: 13)
         }
     }
+
+    // MARK: - 撤销恢复
+
+    @Test func 撤销软删恢复预算() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        let budget = try service.createBudget(makeDraft(env))
+        try service.softDeleteBudget(uuid: budget.uuid)
+        try service.undoSoftDeleteBudget(uuid: budget.uuid)
+        #expect(!budget.isSoftDeleted)
+    }
+
+    @Test func 同维度已有活跃行阻断恢复() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        let old = try service.createBudget(makeDraft(env))
+        try service.softDeleteBudget(uuid: old.uuid)
+        _ = try service.createBudget(makeDraft(env)) // 删除期间重建了同维度行
+        #expect(throws: BudgetServiceError.self) {
+            try service.undoSoftDeleteBudget(uuid: old.uuid)
+        }
+        #expect(old.isSoftDeleted)
+    }
+
+    @Test func 引用分类已删阻断恢复() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        let dining = try makeCategory(env, name: "餐饮")
+        let budget = try service.createBudget(makeDraft(env, categoryID: dining.uuid))
+        try service.softDeleteBudget(uuid: budget.uuid)
+        try CategoryService(context: env.context).softDeleteCategory(uuid: dining.uuid)
+        #expect(throws: BudgetServiceError.self) {
+            try service.undoSoftDeleteBudget(uuid: budget.uuid)
+        }
+        #expect(budget.isSoftDeleted)
+    }
+
+    @Test func 引用账本已删阻断恢复() throws {
+        let env = try makeEnv()
+        let ledgerService = LedgerService(context: env.context)
+        let other = try ledgerService.createLedger(LedgerDraft(name: "旅行"))
+        let service = BudgetService(context: env.context)
+        var draft = BudgetDraft(ledgerID: other.uuid)
+        draft.amountMinorUnits = 100_000
+        let budget = try service.createBudget(draft)
+        try ledgerService.softDeleteLedger(uuid: other.uuid) // 级联软删该预算
+        #expect(throws: BudgetServiceError.self) {
+            try service.undoSoftDeleteBudget(uuid: budget.uuid)
+        }
+        #expect(budget.isSoftDeleted)
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        let budget = try service.createBudget(makeDraft(env))
+        try service.softDeleteBudget(uuid: budget.uuid)
+        try service.undoSoftDeleteBudget(uuid: budget.uuid)
+        try service.undoSoftDeleteBudget(uuid: budget.uuid)
+        #expect(!budget.isSoftDeleted)
+    }
 }

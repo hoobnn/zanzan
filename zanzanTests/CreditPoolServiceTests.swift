@@ -163,4 +163,35 @@ struct CreditPoolServiceTests {
         #expect(cardB.creditPoolID == nil)
         #expect(!cardA.isSoftDeleted) // 解绑不动卡本身
     }
+
+    // MARK: - 撤销恢复
+
+    @Test func 撤销软删仅恢复池本身成员不回绑() throws {
+        let context = try makeContext()
+        let service = CreditPoolService(context: context)
+        var draft = CreditPoolDraft()
+        draft.name = "招商银行"
+        draft.totalLimitString = "1000"
+        let pool = try service.createPool(draft)
+        let card = makeCreditCard(context: context)
+        try context.save()
+        try service.bindCard(accountUUID: card.uuid, toPool: pool.uuid)
+        try service.softDeletePool(uuid: pool.uuid)
+        try service.undoSoftDeletePool(uuid: pool.uuid)
+        #expect(!pool.isSoftDeleted)
+        #expect(card.creditPoolID == nil) // 解绑无记录可回滚，成员须手动重绑
+    }
+
+    @Test func 双重恢复幂等() throws {
+        let context = try makeContext()
+        let service = CreditPoolService(context: context)
+        var draft = CreditPoolDraft()
+        draft.name = "招商银行"
+        draft.totalLimitString = "1000"
+        let pool = try service.createPool(draft)
+        try service.softDeletePool(uuid: pool.uuid)
+        try service.undoSoftDeletePool(uuid: pool.uuid)
+        try service.undoSoftDeletePool(uuid: pool.uuid)
+        #expect(!pool.isSoftDeleted)
+    }
 }

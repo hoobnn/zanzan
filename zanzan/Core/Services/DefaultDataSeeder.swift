@@ -36,6 +36,14 @@ struct DefaultDataSeeder {
         try context.save()
     }
 
+    /// 种子树里某内置子分类的默认父类名（「恢复默认分类」重挂父指针用）；
+    /// 非种子子分类名（含用户已改名）返回 nil。
+    static func defaultParentName(forChildNamed name: String, kind: TransactionKind?) -> String? {
+        guard let kind else { return nil }
+        let tree = kind == .expense ? expenseTree : incomeTree
+        return tree.first { $0.children.contains { $0.name == name } }?.name
+    }
+
     // MARK: - 种子数据
 
     private struct SeedCategory {
