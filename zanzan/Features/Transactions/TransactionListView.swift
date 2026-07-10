@@ -91,10 +91,3 @@ struct TransactionListView: View {
         )
     }
 }
-
-// TODO(Task 10): 占位，记一笔表单在下一任务实现
-struct TransactionFormView: View {
-    let ledgerID: UUID
-    var editing: StoredTransaction? = nil
-    var body: some View { EmptyView() }
-}
