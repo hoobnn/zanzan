@@ -106,7 +106,8 @@ struct AssetsOverviewProviderTests {
     ) -> Transaction {
         let tx = Transaction(
             kind: kind, amountMinorUnits: amount,
-            occurredAt: Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: day))!,
+            // 固定用过去月份：汇率字典按 occurredAt <= asOf(.now) 取最近，未来日期会被正确排除
+            occurredAt: Calendar.current.date(from: DateComponents(year: 2026, month: 6, day: day))!,
             ledgerID: ledgerID
         )
         tx.account = account
@@ -138,7 +139,7 @@ struct AssetsOverviewProviderTests {
         #expect(overview.fxFallbackCurrencyCodes.isEmpty)
 
         // 口径①对照：同月收支统计按流水各自快照（收入 7.0、支出 7.3），历史口径永固
-        let stats = try MonthlyStatsProvider(context: context).stats(ledgerID: ledgerID, year: 2026, month: 7)
+        let stats = try MonthlyStatsProvider(context: context).stats(ledgerID: ledgerID, year: 2026, month: 6)
         #expect(stats.incomeTotalMinorUnits == 70_000) // 10_000 × 7.0，不随最近快照 7.3 改写
         #expect(stats.expenseTotalMinorUnits == 36_500) // 5_000 × 7.3
     }

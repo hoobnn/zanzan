@@ -4,8 +4,8 @@ import SwiftData
 /// 外部汇率源接口（设计文档 §11：写入路径已就绪，接 API 零 schema 改动）。
 /// 现阶段无网络实现——预填走 FxRateProvider 的流水快照字典；对接外部 API 后作为另一实现注入。
 protocol ExchangeRateProviding {
-    /// 1 单位 currencyCode 对本位币（CNY）的汇率；未知币种返回 nil
-    func rate(for currencyCode: String) throws -> Decimal?
+    /// 1 单位 currencyCode 对本位币（CNY）的汇率（asOf 时点口径）；未知币种返回 nil
+    func rate(for currencyCode: String, asOf: Date) throws -> Decimal?
 }
 
 /// 折算共用口径（设计文档 §4、裁决 16：本位币锁定 CNY）
@@ -30,11 +30,14 @@ enum FxConversion {
 struct FxRateProvider: ExchangeRateProviding {
     let context: ModelContext
 
-    func rate(for currencyCode: String) throws -> Decimal? {
+    /// asOf：字典时点上限——只取 occurredAt ≤ asOf 的流水，未来记账（未来日期外币流水）
+    /// 不会钉住当前字典；默认 .now 即「截至现在」的展示语义
+    func rate(for currencyCode: String, asOf: Date = .now) throws -> Decimal? {
         guard currencyCode != FxConversion.baseCurrencyCode else { return 1 }
         var descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate {
-                !$0.isSoftDeleted && $0.currencyCode == currencyCode && $0.fxRateToBase != nil
+                !$0.isSoftDeleted && $0.currencyCode == currencyCode
+                    && $0.fxRateToBase != nil && $0.occurredAt <= asOf
             },
             sortBy: [SortDescriptor(\.occurredAt, order: .reverse)]
         )

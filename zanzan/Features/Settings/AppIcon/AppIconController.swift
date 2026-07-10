@@ -41,7 +41,7 @@ final class AppIconController {
             selectedIcon = option
         } catch {
             refreshSelection()
-            failure = AppIconChangeFailure(message: "\(error.localizedDescription) 请稍后重试。")
+            failure = AppIconChangeFailure(message: String(localized: "\(error.localizedDescription) 请稍后重试。"))
         }
     }
 }

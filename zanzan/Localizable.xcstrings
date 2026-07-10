@@ -2830,6 +2830,286 @@
           }
         }
       }
+    },
+    "仅转账行可填写手续费" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only transfer rows may include a fee"
+          }
+        }
+      }
+    },
+    "分类名不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Category name cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "原支出与到账单必须属于同一账本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The original expense and the settlement must belong to the same ledger"
+          }
+        }
+      }
+    },
+    "备注不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notes cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "年利率超出可接受上限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annual interest rate exceeds the acceptable limit"
+          }
+        }
+      }
+    },
+    "开始/截止时间超出可记账范围" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start/end time is outside the recordable range"
+          }
+        }
+      }
+    },
+    "总期数不能超过 %lld 期" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total periods cannot exceed %lld"
+          }
+        }
+      }
+    },
+    "报销/退款到账单请在报销管理中操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manage reimbursement or refund settlements from reimbursement management"
+          }
+        }
+      }
+    },
+    "有分期/贷款计划使用该账户，请先处理相关计划" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An installment or loan plan uses this account; handle the plan first"
+          }
+        }
+      }
+    },
+    "有分期/贷款计划使用该账本，请先处理相关计划" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An installment or loan plan uses this ledger; handle the plan first"
+          }
+        }
+      }
+    },
+    "有周期计划使用该分类，请先调整或删除相关计划" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A recurring plan uses this category; adjust or delete the plan first"
+          }
+        }
+      }
+    },
+    "有周期计划使用该账户，请先调整或删除相关计划" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A recurring plan uses this account; adjust or delete the plan first"
+          }
+        }
+      }
+    },
+    "有周期计划使用该账本，请先调整或删除相关计划" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A recurring plan uses this ledger; adjust or delete the plan first"
+          }
+        }
+      }
+    },
+    "标签名不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tag name cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "流水引用的账本、账户或分类已删除，请先恢复它们" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The ledger, account, or category referenced by this transaction has been deleted; restore them first"
+          }
+        }
+      }
+    },
+    "计划名称不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan name cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "计划未提前结清，无可撤销的结清操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The plan was not settled early; there is no early settlement to undo"
+          }
+        }
+      }
+    },
+    "记账时间超出可记账范围" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction time is outside the recordable range"
+          }
+        }
+      }
+    },
+    "该流水已有报销/退款到账记录，请先解除关联" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This transaction has reimbursement or refund settlements; remove the links first"
+          }
+        }
+      }
+    },
+    "该流水的报销状态由更高版本创建，请升级 App 后操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The reimbursement status of this transaction was created by a newer version; update the app to proceed"
+          }
+        }
+      }
+    },
+    "账户副标题不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account subtitle cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "账户名不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account name cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "账本名不能超过 %lld 字" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger name cannot exceed %lld characters"
+          }
+        }
+      }
+    },
+    "退款分摊合计必须等于到账金额" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refund allocations must add up to the received amount"
+          }
+        }
+      }
+    },
+    "重复间隔不能超过 %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repeat interval cannot exceed %lld"
+          }
+        }
+      }
+    },
+    "金额不能低于已报销/退款的分摊合计，请先调整分摊" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount cannot be lower than the total reimbursed/refunded allocations; adjust the allocations first"
+          }
+        }
+      }
+    },
+    "预算年份必须在 %lld 到 %lld 之间" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Budget year must be between %lld and %lld"
+          }
+        }
+      }
+    },
+    "首期还款日超出可记账范围" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First due date is outside the recordable range"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

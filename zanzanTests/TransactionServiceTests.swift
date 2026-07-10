@@ -453,4 +453,66 @@ struct TransactionServiceTests {
         #expect(tx.targetAccount?.uuid == f.card.uuid)
         #expect(tx.targetAmountMinorUnits == nil)
     }
+
+    // MARK: - 归档实体新引用禁止（§4）
+
+    @Test func 归档账户记账被拒() throws {
+        let f = try makeFixture()
+        f.cash.isArchived = true
+        f.card.isArchived = true
+        try f.context.save()
+        let commands = TransactionService(context: f.context)
+        #expect(throws: TransactionServiceError.self) {
+            _ = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        }
+        // 转入方归档同样阻断
+        var transfer = TransactionDraft()
+        transfer.kind = .transfer
+        transfer.amountString = "100"
+        transfer.accountUUID = f.cash.uuid
+        transfer.targetAccountUUID = f.card.uuid
+        f.cash.isArchived = false
+        try f.context.save()
+        #expect(throws: TransactionServiceError.self) {
+            _ = try commands.recordTransaction(transfer, ledgerID: f.ledger.uuid)
+        }
+    }
+
+    @Test func 归档分类记账被拒() throws {
+        let f = try makeFixture()
+        f.dining.isArchived = true
+        try f.context.save()
+        #expect(throws: TransactionServiceError.self) {
+            _ = try TransactionService(context: f.context).recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        }
+    }
+
+    @Test func 编辑不换引用不受归档影响() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        // 事后归档账户与分类：修正错字/金额不该被卡（仅新引用禁止）
+        f.cash.isArchived = true
+        f.dining.isArchived = true
+        try f.context.save()
+        var edit = expenseDraft(f, amount: "30")
+        edit.note = "修正备注"
+        try commands.updateTransaction(uuid: tx.uuid, draft: edit)
+        #expect(tx.amountMinorUnits == 3_000)
+        #expect(tx.note == "修正备注")
+    }
+
+    @Test func 编辑换到归档账户被拒() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        f.card.isArchived = true
+        try f.context.save()
+        var edit = expenseDraft(f)
+        edit.accountUUID = f.card.uuid
+        #expect(throws: TransactionServiceError.self) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: edit)
+        }
+        #expect(tx.account?.uuid == f.cash.uuid) // 阻断且不污染上下文
+    }
 }

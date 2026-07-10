@@ -49,6 +49,27 @@ struct FxRateProviderTests {
         #expect(rate == 1)
     }
 
+    @Test func 未来日期流水不钉住当前字典() throws {
+        let context = try makeContext()
+        try insertTransaction(context, currency: "USD", rate: Decimal(string: "7.10")!, occurredAt: .now.addingTimeInterval(-3_600))
+        // 未来记账（occurredAt > now）不得成为「当前」字典快照
+        try insertTransaction(context, currency: "USD", rate: Decimal(string: "9.99")!, occurredAt: .now.addingTimeInterval(86_400))
+        let rate = try FxRateProvider(context: context).rate(for: "USD")
+        #expect(rate == Decimal(string: "7.10"))
+    }
+
+    @Test func asOf注入取历史时点字典() throws {
+        let context = try makeContext()
+        let base = Date.now
+        try insertTransaction(context, currency: "USD", rate: Decimal(string: "7.00")!, occurredAt: base.addingTimeInterval(-7_200))
+        try insertTransaction(context, currency: "USD", rate: Decimal(string: "7.50")!, occurredAt: base.addingTimeInterval(-3_600))
+        let provider = FxRateProvider(context: context)
+        // asOf 落在两笔之间：取更早那笔的时点字典
+        #expect(try provider.rate(for: "USD", asOf: base.addingTimeInterval(-5_400)) == Decimal(string: "7.00"))
+        // asOf 早于全部快照：无字典可用
+        #expect(try provider.rate(for: "USD", asOf: base.addingTimeInterval(-10_000)) == nil)
+    }
+
     @Test func 无快照返回nil() throws {
         let context = try makeContext()
         // 无汇率的同币种流水不构成快照（谓词过滤 fxRateToBase != nil）

@@ -359,4 +359,58 @@ struct TransactionCSVImporterTests {
         try importer.undoBatch(batchUUID: batch.uuid)
         #expect(try importer.existingBatch(withContentHash: hash) == nil)
     }
+
+    // MARK: - 行数上限与归档策略
+
+    @Test func 超过行数上限整批拒绝() throws {
+        let f = try makeFixture()
+        let rows = String(repeating: "2026-01-01,支出,10,餐饮,现金,,,\n", count: TransactionCSVImporter.maxImportRows + 1)
+        let csv = header + "\n" + rows
+        #expect(throws: TransactionCSVImportError.tooManyRows(limit: TransactionCSVImporter.maxImportRows)) {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "big.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+    }
+
+    @Test func 恰达上限通过行数检查() throws {
+        let f = try makeFixture()
+        // 恰 10_000 行且末行金额非法：抛 invalidRows 而非 tooManyRows，
+        // 证明上限判定放行边界值，又不用真落库 10_000 笔（逐笔 save 过慢）
+        var rows = String(repeating: "2026-01-01,支出,10,餐饮,现金,,,\n", count: TransactionCSVImporter.maxImportRows - 1)
+        rows += "2026-01-01,支出,abc,餐饮,现金,,,\n"
+        let csv = header + "\n" + rows
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "big.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("应因末行非法整批失败")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [TransactionCSVImporter.maxImportRows + 1])
+        } catch {
+            Issue.record("上限边界值不应触发 tooManyRows：\(error)")
+        }
+    }
+
+    @Test func 归档账户行级报错() throws {
+        let f = try makeFixture()
+        f.card.isArchived = true
+        try f.context.save()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,储蓄卡,,,归档账户支出
+        2026-01-02,转账,10,,现金,储蓄卡,,转入归档账户
+        """
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "a.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("应整批失败")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2, 3])
+            #expect(errors[0].message == TransactionCSVImportError.accountArchived("储蓄卡").localizedDescription)
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+    }
 }

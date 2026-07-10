@@ -146,6 +146,12 @@ struct TransactionService {
 
     private func resolve(_ v: TransactionDraft.Validated, previous: Transaction?) throws -> Resolved {
         let account = try fetchActiveAccount(v.accountUUID)
+        // §4 归档=新引用禁止：新记账或编辑换到的引用已归档一律阻断；
+        // 编辑未换引用放行——修正错字不该被既有引用的归档状态卡住。
+        // previous == nil（新记账）时条件恒真，一条守卫覆盖两条路径。
+        if account.isArchived, previous?.account?.uuid != account.uuid {
+            throw TransactionServiceError.accountArchived
+        }
         var category: Category?
         var targetAccount: Account?
         var targetAmount: Int?
@@ -153,9 +159,15 @@ struct TransactionService {
         case .expense, .income:
             let found = try fetchActiveCategory(v.categoryUUID!)
             guard found.kind == v.kind else { throw TransactionServiceError.categoryKindMismatch }
+            if found.isArchived, previous?.category?.uuid != found.uuid {
+                throw TransactionServiceError.categoryArchived
+            }
             category = found
         case .transfer:
             let target = try fetchActiveAccount(v.targetAccountUUID!)
+            if target.isArchived, previous?.targetAccount?.uuid != target.uuid {
+                throw TransactionServiceError.accountArchived
+            }
             targetAccount = target
             if target.currencyCode == account.currencyCode {
                 targetAmount = nil // 同币种转账强制归 nil（§5.4）
@@ -247,7 +259,9 @@ struct TransactionService {
 enum TransactionServiceError: LocalizedError {
     case ledgerNotFound
     case accountNotFound
+    case accountArchived
     case categoryNotFound
+    case categoryArchived
     case transactionNotFound
     case categoryKindMismatch
     case kindImmutable
@@ -263,7 +277,9 @@ enum TransactionServiceError: LocalizedError {
         switch self {
         case .ledgerNotFound: String(localized: "账本不存在或已删除")
         case .accountNotFound: String(localized: "账户不存在或已删除")
+        case .accountArchived: String(localized: "账户已归档，请先取消归档再使用")
         case .categoryNotFound: String(localized: "分类不存在或已删除")
+        case .categoryArchived: String(localized: "分类已归档，请先取消归档再使用")
         case .transactionNotFound: String(localized: "流水不存在")
         case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
         case .kindImmutable: String(localized: "流水类型不可修改，请删除后重新记一笔")

@@ -12,6 +12,10 @@ import SwiftData
 struct TransactionCSVImporter {
     let context: ModelContext
 
+    /// 单次导入的数据行数上限：逐笔经 TransactionService 落库（每笔一次 save），
+    /// 超大文件会长时间占主线程；超限整批拒绝，提示用户拆分文件
+    static let maxImportRows = 10_000
+
     /// 行级错误：line 为 CSV 文件内行号（表头为第 1 行）。
     /// nonisolated：纯值类型，Equatable 合成不得绑定 MainActor（Error 语境是 nonisolated）
     nonisolated struct RowError: Equatable {
@@ -43,6 +47,9 @@ struct TransactionCSVImporter {
         }
         let dataRows = Array(records.dropFirst())
         guard !dataRows.isEmpty else { throw TransactionCSVImportError.noDataRows }
+        guard dataRows.count <= Self.maxImportRows else {
+            throw TransactionCSVImportError.tooManyRows(limit: Self.maxImportRows)
+        }
         try ensureActiveLedger(ledgerID)
 
         // 名称 → (uuid, 币种) 查找表（仅活跃实体）。ponytail: 同名取先建的一个，重名歧义不阻断
@@ -141,8 +148,8 @@ struct TransactionCSVImporter {
 
     private func validateRow(
         _ fields: [String], line: Int, isLegacyFormat: Bool,
-        accountsByName: [String: (uuid: UUID, currencyCode: String)],
-        categoryIDsByKey: [String: UUID]
+        accountsByName: [String: (uuid: UUID, currencyCode: String, isArchived: Bool)],
+        categoryIDsByKey: [String: (uuid: UUID, isArchived: Bool)]
     ) throws -> ValidatedRow {
         let expectedColumns = isLegacyFormat ? TransactionCSV.legacyColumnCount : TransactionCSV.columnCount
         guard fields.count == expectedColumns else {
@@ -187,6 +194,10 @@ struct TransactionCSVImporter {
         guard let account = accountsByName[trimmedAccountName] else {
             throw TransactionCSVImportError.accountNotFound(trimmedAccountName)
         }
+        // §4 归档=新引用禁止，导入按默认阻断；导历史数据特例待产品裁决后放开
+        guard !account.isArchived else {
+            throw TransactionCSVImportError.accountArchived(trimmedAccountName)
+        }
         draft.accountUUID = account.uuid
         // 流水币种由账户决定（§5.4：收支 = 账户币种，转账 = 转出方币种），行内不符即数据矛盾
         guard rowCurrency == account.currencyCode else {
@@ -205,14 +216,21 @@ struct TransactionCSVImporter {
         switch kind {
         case .expense, .income:
             let trimmedCategoryName = categoryName.trimmingCharacters(in: .whitespaces)
-            guard let categoryUUID = categoryIDsByKey[categoryKey(kind, trimmedCategoryName)] else {
+            guard let category = categoryIDsByKey[categoryKey(kind, trimmedCategoryName)] else {
                 throw TransactionCSVImportError.categoryNotFound(trimmedCategoryName)
             }
-            draft.categoryUUID = categoryUUID
+            // 同账户口径：归档分类阻断，否则预校验放行后会在服务层落库时被拒、击穿原子承诺
+            guard !category.isArchived else {
+                throw TransactionCSVImportError.categoryArchived(trimmedCategoryName)
+            }
+            draft.categoryUUID = category.uuid
         case .transfer:
             let trimmedTargetName = targetAccountName.trimmingCharacters(in: .whitespaces)
             guard let target = accountsByName[trimmedTargetName] else {
                 throw TransactionCSVImportError.accountNotFound(trimmedTargetName)
+            }
+            guard !target.isArchived else {
+                throw TransactionCSVImportError.accountArchived(trimmedTargetName)
             }
             draft.targetAccountUUID = target.uuid
             isCrossCurrencyTransfer = target.currencyCode != rowCurrency
@@ -250,24 +268,27 @@ struct TransactionCSVImporter {
         guard count > 0 else { throw TransactionServiceError.ledgerNotFound }
     }
 
-    private func activeAccountsByName() throws -> [String: (uuid: UUID, currencyCode: String)] {
+    /// 归档实体保留在查找表并带 isArchived 标记：行级报"已归档"而非误报"不存在"
+    private func activeAccountsByName() throws -> [String: (uuid: UUID, currencyCode: String, isArchived: Bool)] {
         let accounts = try context.fetch(
             FetchDescriptor<Account>(predicate: #Predicate { !$0.isSoftDeleted })
         )
         return accounts.reduce(into: [:]) { dict, account in
-            if dict[account.name] == nil { dict[account.name] = (account.uuid, account.currencyCode) }
+            if dict[account.name] == nil {
+                dict[account.name] = (account.uuid, account.currencyCode, account.isArchived)
+            }
         }
     }
 
     /// 分类查找表按 "方向|名称" 组合键——同名跨方向分类（如支出/收入各有"其他"）不串线，
     /// 方向不匹配自然查不到，报"分类不存在或方向不符"
-    private func activeCategoryIDsByKindAndName() throws -> [String: UUID] {
+    private func activeCategoryIDsByKindAndName() throws -> [String: (uuid: UUID, isArchived: Bool)] {
         let categories = try context.fetch(
             FetchDescriptor<Category>(predicate: #Predicate { !$0.isSoftDeleted })
         )
         return categories.reduce(into: [:]) { dict, category in
             let key = categoryKey(TransactionKind(rawValue: category.kindRawValue), category.name)
-            if dict[key] == nil { dict[key] = category.uuid }
+            if dict[key] == nil { dict[key] = (category.uuid, category.isArchived) }
         }
     }
 
@@ -286,7 +307,10 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
     case invalidFee(String)
     case feeNotAllowed
     case accountNotFound(String)
+    case accountArchived(String)
     case categoryNotFound(String)
+    case categoryArchived(String)
+    case tooManyRows(limit: Int)
     case currencyMismatch(row: String, account: String)
     case invalidFxRate(String)
     case fxRateNotAllowed
@@ -315,8 +339,14 @@ nonisolated enum TransactionCSVImportError: LocalizedError, Equatable {
             String(localized: "仅转账行可填写手续费")
         case let .accountNotFound(name):
             String(localized: "账户「\(name)」不存在或已删除")
+        case let .accountArchived(name):
+            String(localized: "账户「\(name)」已归档，请先取消归档再导入")
         case let .categoryNotFound(name):
             String(localized: "分类「\(name)」不存在或方向不符")
+        case let .categoryArchived(name):
+            String(localized: "分类「\(name)」已归档，请先取消归档再导入")
+        case let .tooManyRows(limit):
+            String(localized: "流水行数超过单次导入上限 \(limit) 行，请拆分文件后分批导入")
         case let .currencyMismatch(row, account):
             String(localized: "币种「\(row)」与账户币种「\(account)」不符")
         case let .invalidFxRate(value):
