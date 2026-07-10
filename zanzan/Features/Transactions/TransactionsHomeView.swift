@@ -1,13 +1,28 @@
+import SwiftData
 import SwiftUI
 
+/// 明细 Tab 首页：解析当前账本（默认账本归一化）后转交列表。
 struct TransactionsHomeView: View {
+    @Query(filter: #Predicate<StoredLedger> { !$0.isSoftDeleted }, sort: \StoredLedger.sortOrder)
+    private var ledgers: [StoredLedger]
+
+    /// 默认账本归一化（设计文档 §4 同步合并兜底样板）：优先 isDefault，违例时回落首本。
+    private var currentLedger: StoredLedger? {
+        ledgers.first(where: \.isDefault) ?? ledgers.first
+    }
+
     var body: some View {
-        ContentUnavailableView(
-            "还没有账单",
-            systemImage: "list.bullet.rectangle",
-            description: Text("记账功能开发中")
-        )
-        .navigationTitle("明细")
+        if let ledger = currentLedger {
+            TransactionListView(ledgerID: ledger.uuid)
+                .navigationTitle(ledger.name)
+        } else {
+            ContentUnavailableView(
+                "还没有账本",
+                systemImage: "book.closed",
+                description: Text("请到「我的 → 账本管理」创建账本")
+            )
+            .navigationTitle("明细")
+        }
     }
 }
 
