@@ -34,7 +34,7 @@
 - Consumes: 无。
 - Produces: `MoneyAmount.minorUnits(fromDecimalString:) -> Int?`（非负、≤2 位小数）、`MoneyAmount.signedMinorUnits(fromDecimalString:) -> Int?`（允许负号，账户期初余额用）、`MoneyAmount.decimalString(fromMinorUnits:) -> String`（表单回填）、全局 `formatAmount(_ minorUnits: Int, withSign: Bool = false) -> String`（zh_CN + CNY 锁定，正数 withSign 加 `+`）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/MoneyFormatterTests.swift
@@ -77,9 +77,9 @@ struct MoneyFormatterTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**（`cannot find 'MoneyAmount' in scope`）
+- [x] **Step 2: 跑测试确认失败**（`cannot find 'MoneyAmount' in scope`）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Shared/MoneyFormatter.swift
@@ -126,8 +126,8 @@ func formatAmount(_ minorUnits: Int, withSign: Bool = false) -> String {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(shared): 金额换算与展示格式化唯一入口`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(shared): 金额换算与展示格式化唯一入口`
 
 ---
 
@@ -142,7 +142,7 @@ func formatAmount(_ minorUnits: Int, withSign: Bool = false) -> String {
 - Consumes: `StoredLedger` / `StoredTransaction` / `StoredBudget` 模型。
 - Produces: `LedgerDraft { name, colorID; validated() throws -> LedgerDraft }`、`LedgerCommands(context:)` 的 `createLedger(_:) -> StoredLedger`（首本自动 `isDefault`）、`updateLedger(uuid:draft:)`、`setDefaultLedger(uuid:)`（唯一性）、`softDeleteLedger(uuid:)`（默认账本禁删、有活跃流水阻断、级联软删预算）；`LedgerDraftError` / `LedgerCommandError`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/LedgerCommandsTests.swift
@@ -230,8 +230,8 @@ struct LedgerCommandsTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Core/Drafts/LedgerDraft.swift
@@ -355,8 +355,8 @@ enum LedgerCommandError: LocalizedError {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(core): 账本草稿校验与写路径命令`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(core): 账本草稿校验与写路径命令`
 
 ---
 
@@ -371,7 +371,7 @@ enum LedgerCommandError: LocalizedError {
 - Consumes: `LedgerCommands.createLedger(_:)`；`StoredAccount` / `StoredCategory` / `StoredMeta` 模型。
 - Produces: `DefaultDataSeeder(context:).seedIfNeeded()`（幂等，完成标记 `StoredMeta` key `dataMigration.defaultSeed`）；种子 = 默认账本「日常账本」+ 默认账户「现金」（fund）+ 全局两级分类树（支出 8 个一级含餐饮 4 子类、收入 4 个一级），分类全部 `isBuiltIn = true`、`iconKindRawValue = "symbol"`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/DefaultDataSeederTests.swift
@@ -422,8 +422,8 @@ struct DefaultDataSeederTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Core/Commands/DefaultDataSeeder.swift
@@ -521,8 +521,8 @@ init() {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(core): 首启种子幂等写入默认账本账户与分类`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(core): 首启种子幂等写入默认账本账户与分类`
 
 ---
 
@@ -537,7 +537,7 @@ init() {
 - Consumes: `LedgerDraft` / `LedgerCommands`。
 - Produces: `LedgersListView`（列表 + 新建/编辑 sheet + 设默认/删除 swipe）、`LedgerFormView(title:draft:onSave:)`、`SettingsRoute`（`.ledgers` / `.accounts`，Task 7 复用）。`AccountsListView` 在 Task 7 才建，本任务先让 `.accounts` 分支指向 `ContentUnavailableView("账户管理开发中", systemImage: "creditcard")` 占位，Task 7 替换。
 
-- [ ] **Step 1: 实现三个视图**
+- [x] **Step 1: 实现三个视图**
 
 ```swift
 // zanzan/Features/Settings/SettingsHomeView.swift（整文件替换）
@@ -694,8 +694,8 @@ struct LedgerFormView: View {
 }
 ```
 
-- [ ] **Step 2: 编译 + 全量单测确认绿**（UI 无单测，构建即验证）
-- [ ] **Step 3: Commit** `✨ feat(ledgers): 账本管理列表与表单接入我的页`
+- [x] **Step 2: 编译 + 全量单测确认绿**（UI 无单测，构建即验证）
+- [x] **Step 3: Commit** `✨ feat(ledgers): 账本管理列表与表单接入我的页`
 
 ---
 
@@ -710,7 +710,7 @@ struct LedgerFormView: View {
 - Consumes: `MoneyAmount.signedMinorUnits` / `minorUnits`；`StoredAccount` / `StoredTransaction` / `StoredBalanceSnapshot`。
 - Produces: `AccountDraft`（字段 `name/subtitle/kind/initialBalanceString/creditLimitString/statementDay/paymentDueDay/note/isIncludedInNetWorth`；`validated() -> AccountDraft.Validated`——非 credit 类清空信用字段、账单/还款日 1...28）；`AccountCommands(context:)` 的 `createAccount(_:) -> StoredAccount`、`updateAccount(uuid:draft:)`、`setArchived(uuid:isArchived:)`、`softDeleteAccount(uuid:)`（活跃流水引用阻断——含转入方引用；级联软删余额快照）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/AccountCommandsTests.swift
@@ -820,8 +820,8 @@ struct AccountCommandsTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Core/Drafts/AccountDraft.swift
@@ -1000,8 +1000,8 @@ enum AccountCommandError: LocalizedError {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(core): 账户草稿校验与写路径命令`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(core): 账户草稿校验与写路径命令`
 
 ---
 
@@ -1016,7 +1016,7 @@ enum AccountCommandError: LocalizedError {
 - Consumes: `StoredTransaction.balanceDeltaMinorUnits(for:)`（fee 恒为流出口径）。
 - Produces: `AccountBalanceProjector(context:).balanceMinorUnits(of: StoredAccount) throws -> Int`（期初 + Σ 活跃流水 delta，谓词下推双向账户引用）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/AccountBalanceProjectorTests.swift
@@ -1060,8 +1060,8 @@ struct AccountBalanceProjectorTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Core/Projections/AccountBalanceProjector.swift
@@ -1088,8 +1088,8 @@ struct AccountBalanceProjector {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(core): 账户余额派生投影器`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(core): 账户余额派生投影器`
 
 ---
 
@@ -1105,7 +1105,7 @@ struct AccountBalanceProjector {
 - Consumes: `AccountDraft` / `AccountCommands` / `AccountBalanceProjector` / `formatAmount`。
 - Produces: `AccountsListView`（按 kind 分组 + 已归档区 + 余额展示）、`AccountFormView(title:draft:onSave:)`、`AccountKind.displayName` / `AccountKind.symbolName`。
 
-- [ ] **Step 1: 实现**
+- [x] **Step 1: 实现**
 
 ```swift
 // zanzan/Features/Accounts/AccountKind+Display.swift
@@ -1357,8 +1357,8 @@ SettingsHomeView `.accounts` 分支替换：
 case .accounts: AccountsListView()
 ```
 
-- [ ] **Step 2: 编译 + 全量单测确认绿**
-- [ ] **Step 3: Commit** `✨ feat(accounts): 账户管理列表与表单含余额派生展示`
+- [x] **Step 2: 编译 + 全量单测确认绿**
+- [x] **Step 3: Commit** `✨ feat(accounts): 账户管理列表与表单含余额派生展示`
 
 ---
 
@@ -1373,7 +1373,7 @@ case .accounts: AccountsListView()
 - Consumes: `MoneyAmount.minorUnits`；`StoredTransaction` / `StoredAccount` / `StoredCategory` / `StoredLedger`。
 - Produces: `TransactionDraft`（`kind/amountString/occurredAt/note/accountUUID/targetAccountUUID/categoryUUID/feeString`；`validated() -> TransactionDraft.Validated`——金额 > 0、收支必有账户+分类且非转账 fee 恒 0、转账必有双方且禁自转禁分类）；`TransactionCommands(context:)` 的 `recordTransaction(_:ledgerID:) -> StoredTransaction`（ledgerID 必指活跃账本、分类方向匹配、MVP 锁 CNY / fx 恒 nil）、`updateTransaction(uuid:draft:)`（kind 终生不可改写）、`softDeleteTransaction(uuid:)`、`undoSoftDeleteTransaction(uuid:)`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```swift
 // zanzanTests/TransactionCommandsTests.swift
@@ -1525,8 +1525,8 @@ struct TransactionCommandsTests {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现**
 
 ```swift
 // zanzan/Core/Drafts/TransactionDraft.swift
@@ -1736,8 +1736,8 @@ enum TransactionCommandError: LocalizedError {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-- [ ] **Step 5: Commit** `✨ feat(core): 流水草稿校验与写路径命令`
+- [x] **Step 4: 跑测试确认通过**
+- [x] **Step 5: Commit** `✨ feat(core): 流水草稿校验与写路径命令`
 
 ---
 
@@ -1753,7 +1753,7 @@ enum TransactionCommandError: LocalizedError {
 - Consumes: `TransactionCommands.softDeleteTransaction` / `formatAmount` / `StoredTransaction.signedMinorUnits`。
 - Produces: `TransactionsHomeView`（默认账本归一化：`isDefault` 优先，无默认取首本活跃）、`TransactionListView(ledgerID:)`（init 参数化谓词 @Query——内嵌子视图，非 navigationDestination 目标页，不触历史教训红线）、`TransactionRowView(transaction:)`、`TransactionKind.displayName`。记一笔/编辑 sheet 挂接 Task 10 的 `TransactionFormView`；本任务先以 `EmptyView()` 占位 sheet 内容，Task 10 替换。
 
-- [ ] **Step 1: 实现**
+- [x] **Step 1: 实现**
 
 ```swift
 // zanzan/Features/Transactions/TransactionKind+Display.swift
@@ -1977,8 +1977,8 @@ struct TransactionFormView: View {
 }
 ```
 
-- [ ] **Step 2: 编译 + 全量单测确认绿**
-- [ ] **Step 3: Commit** `✨ feat(transactions): 明细列表按天分组与默认账本归一化`
+- [x] **Step 2: 编译 + 全量单测确认绿**
+- [x] **Step 3: Commit** `✨ feat(transactions): 明细列表按天分组与默认账本归一化`
 
 ---
 
@@ -1992,7 +1992,7 @@ struct TransactionFormView: View {
 - Consumes: `TransactionDraft` / `TransactionCommands` / `MoneyAmount.decimalString` / `TransactionKind.displayName`。
 - Produces: `TransactionFormView(ledgerID:editing:)`——新建/编辑共用；编辑锁 kind；分类按方向过滤两级平铺；账户过滤 `isSelectableForRecord && !isArchived`。
 
-- [ ] **Step 1: 实现**
+- [x] **Step 1: 实现**
 
 ```swift
 // zanzan/Features/Transactions/TransactionFormView.swift
@@ -2142,21 +2142,21 @@ struct TransactionFormView: View {
 
 同时删除 `TransactionListView.swift` 底部的临时占位 `TransactionFormView`。
 
-- [ ] **Step 2: 编译 + 全量单测确认绿**
-- [ ] **Step 3: Commit** `✨ feat(transactions): 记一笔与编辑流水表单`
+- [x] **Step 2: 编译 + 全量单测确认绿**
+- [x] **Step 3: Commit** `✨ feat(transactions): 记一笔与编辑流水表单`
 
 ---
 
 ### Task 11: 全量回归与收尾
 
-- [ ] **Step 1: 跑全量测试（单测 + UI 测试）**
+- [x] **Step 1: 跑全量测试（单测 + UI 测试）**
 
 Run: `xcodebuild test -project zanzan.xcodeproj -scheme zanzan -destination 'platform=iOS Simulator,name=iPhone 17' -quiet`
 Expected: 全绿（含既有 40+ 单测与 2 条 UI 测试）。
 
-- [ ] **Step 2: 模拟器冒烟**：build & run，确认首启种子生效（明细页显示「日常账本」、我的页两个管理入口可进、账户页显示「现金」）。受模拟器验证约束（无法驱动键盘），记账主流程以单测为准，UI 以结构截图确认。
+- [x] **Step 2: 模拟器冒烟**：build & run，确认首启种子生效（明细页显示「日常账本」、我的页两个管理入口可进、账户页显示「现金」）。受模拟器验证约束（无法驱动键盘），记账主流程以单测为准，UI 以结构截图确认。
 
-- [ ] **Step 3: 计划勾选回写 + 最终提交**（若有未提交文件）`📝 docs(arch): 勾选 MVP 核心闭环计划`
+- [x] **Step 3: 计划勾选回写 + 最终提交**（若有未提交文件）`📝 docs(arch): 勾选 MVP 核心闭环计划`
 
 ## Self-Review 记录
 
