@@ -54,10 +54,19 @@ struct InstallmentPlanDraft {
     func validated() throws -> Validated {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw InstallmentPlanDraftError.emptyName }
+        guard name.count <= DraftLimits.maxNameLength else { throw InstallmentPlanDraftError.nameTooLong }
         guard let accountID else { throw InstallmentPlanDraftError.missingAccount }
         guard let ledgerID else { throw InstallmentPlanDraftError.missingLedger }
         guard principalMinorUnits > 0 else { throw InstallmentPlanDraftError.nonPositivePrincipal }
         guard totalPeriods >= 1 else { throw InstallmentPlanDraftError.invalidTotalPeriods }
+        guard totalPeriods <= DraftLimits.maxInstallmentPeriods else {
+            throw InstallmentPlanDraftError.tooManyPeriods
+        }
+        guard DraftLimits.occurredAtRange.contains(firstDueAt) else {
+            throw InstallmentPlanDraftError.firstDueAtOutOfRange
+        }
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count <= DraftLimits.maxNoteLength else { throw InstallmentPlanDraftError.noteTooLong }
         // 每期本金至少 1 分（期供流水 amount 恒正的可执行性约束）
         guard principalMinorUnits >= totalPeriods else { throw InstallmentPlanDraftError.principalLessThanPeriods }
 
@@ -69,6 +78,9 @@ struct InstallmentPlanDraft {
         case .annuity, .linearPrincipal:
             guard let annualRateBps else { throw InstallmentPlanDraftError.missingAnnualRate }
             guard annualRateBps >= 0 else { throw InstallmentPlanDraftError.negativeAnnualRate }
+            guard annualRateBps <= DraftLimits.maxAnnualRateBps else {
+                throw InstallmentPlanDraftError.annualRateTooHigh
+            }
             rate = annualRateBps
         case .interestOnly:
             // 见类型注释：零本金期与 amount 恒正冲突，暂不支持
@@ -102,7 +114,7 @@ struct InstallmentPlanDraft {
             amortizationKind: amortizationKind,
             firstDueAt: firstDueAt,
             isAutoSettle: isAutoSettle,
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            note: note,
             flatFeePerPeriodMinorUnits: flatFee,
             customPeriods: custom
         )
@@ -111,13 +123,18 @@ struct InstallmentPlanDraft {
 
 enum InstallmentPlanDraftError: LocalizedError, Equatable {
     case emptyName
+    case nameTooLong
+    case noteTooLong
     case missingAccount
     case missingLedger
     case nonPositivePrincipal
     case invalidTotalPeriods
+    case tooManyPeriods
+    case firstDueAtOutOfRange
     case principalLessThanPeriods
     case missingAnnualRate
     case negativeAnnualRate
+    case annualRateTooHigh
     case interestOnlyUnsupported
     case missingFlatFee
     case negativeFlatFee
@@ -128,13 +145,18 @@ enum InstallmentPlanDraftError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "计划名称不能为空")
+        case .nameTooLong: String(localized: "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
+        case .noteTooLong: String(localized: "备注不能超过 \(DraftLimits.maxNoteLength) 字")
         case .missingAccount: String(localized: "请选择债务账户")
         case .missingLedger: String(localized: "请选择账本")
         case .nonPositivePrincipal: String(localized: "本金总额必须大于零")
         case .invalidTotalPeriods: String(localized: "总期数至少为 1 期")
+        case .tooManyPeriods: String(localized: "总期数不能超过 \(DraftLimits.maxInstallmentPeriods) 期")
+        case .firstDueAtOutOfRange: String(localized: "首期还款日超出可记账范围")
         case .principalLessThanPeriods: String(localized: "本金总额不能少于期数（每期本金至少 1 分）")
         case .missingAnnualRate: String(localized: "该还款方式需要填写年利率")
         case .negativeAnnualRate: String(localized: "年利率不能为负")
+        case .annualRateTooHigh: String(localized: "年利率超出可接受上限")
         case .interestOnlyUnsupported: String(localized: "先息后本暂不支持")
         case .missingFlatFee: String(localized: "固定手续费方式需要填写每期手续费")
         case .negativeFlatFee: String(localized: "每期手续费不能为负")

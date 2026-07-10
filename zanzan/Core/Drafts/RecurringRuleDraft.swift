@@ -42,8 +42,14 @@ struct RecurringRuleDraft {
     func validated() throws -> Validated {
         let name = self.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw RecurringRuleDraftError.emptyName }
+        guard name.count <= DraftLimits.maxNameLength else { throw RecurringRuleDraftError.nameTooLong }
         guard interval >= 1 else { throw RecurringRuleDraftError.invalidInterval }
-        if let endAt, endAt < startAt { throw RecurringRuleDraftError.endBeforeStart }
+        guard interval <= DraftLimits.maxRecurrenceInterval else { throw RecurringRuleDraftError.intervalTooLarge }
+        guard DraftLimits.occurredAtRange.contains(startAt) else { throw RecurringRuleDraftError.dateOutOfRange }
+        if let endAt {
+            guard endAt >= startAt else { throw RecurringRuleDraftError.endBeforeStart }
+            guard DraftLimits.occurredAtRange.contains(endAt) else { throw RecurringRuleDraftError.dateOutOfRange }
+        }
         guard let amount = MoneyAmount.minorUnits(fromDecimalString: amountString), amount > 0 else {
             throw RecurringRuleDraftError.invalidAmount
         }
@@ -51,6 +57,7 @@ struct RecurringRuleDraft {
         let days = try normalizedRecurrenceDays()
         let tagIDs = dedupedTagIDs()
         let note = templateNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count <= DraftLimits.maxNoteLength else { throw RecurringRuleDraftError.noteTooLong }
 
         switch templateKind {
         case .expense, .income:
@@ -113,9 +120,13 @@ struct RecurringRuleDraft {
 
 enum RecurringRuleDraftError: LocalizedError {
     case emptyName
+    case nameTooLong
+    case noteTooLong
     case invalidInterval
+    case intervalTooLarge
     case invalidRecurrenceDays
     case endBeforeStart
+    case dateOutOfRange
     case invalidAmount
     case missingAccount
     case missingCategory
@@ -125,9 +136,13 @@ enum RecurringRuleDraftError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "请输入计划名称")
+        case .nameTooLong: String(localized: "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
+        case .noteTooLong: String(localized: "备注不能超过 \(DraftLimits.maxNoteLength) 字")
         case .invalidInterval: String(localized: "重复间隔必须大于等于 1")
+        case .intervalTooLarge: String(localized: "重复间隔不能超过 \(DraftLimits.maxRecurrenceInterval)")
         case .invalidRecurrenceDays: String(localized: "触发日超出有效范围")
         case .endBeforeStart: String(localized: "截止时间不能早于开始时间")
+        case .dateOutOfRange: String(localized: "开始/截止时间超出可记账范围")
         case .invalidAmount: String(localized: "金额须为大于 0 的数字（最多两位小数）")
         case .missingAccount: String(localized: "请选择账户")
         case .missingCategory: String(localized: "请选择分类")

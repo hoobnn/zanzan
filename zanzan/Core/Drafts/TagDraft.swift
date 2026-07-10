@@ -17,6 +17,7 @@ struct TagDraft {
     func validated() throws -> Validated {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw TagDraftError.emptyName }
+        guard name.count <= DraftLimits.maxNameLength else { throw TagDraftError.nameTooLong }
         let color = colorID.trimmingCharacters(in: .whitespaces)
         return Validated(
             name: name,
@@ -38,10 +39,12 @@ extension TagDraft {
 
 enum TagDraftError: LocalizedError {
     case emptyName
+    case nameTooLong
 
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "标签名不能为空")
+        case .nameTooLong: String(localized: "标签名不能超过 \(DraftLimits.maxNameLength) 字")
         }
     }
 }

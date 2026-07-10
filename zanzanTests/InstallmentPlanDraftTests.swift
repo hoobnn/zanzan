@@ -166,4 +166,70 @@ struct InstallmentPlanDraftTests {
         #expect(v.flatFeePerPeriodMinorUnits == nil)
         #expect(v.annualRateBps == nil)
     }
+
+    // MARK: - DraftLimits 边界
+
+    @Test func 名称恰达上限通过() throws {
+        var draft = flatFeeDraft()
+        draft.name = String(repeating: "名", count: 100)
+        #expect(try draft.validated().name.count == 100)
+    }
+
+    @Test func 名称超上限拒绝() {
+        var draft = flatFeeDraft()
+        draft.name = String(repeating: "名", count: 101)
+        #expect(throws: InstallmentPlanDraftError.nameTooLong) { _ = try draft.validated() }
+    }
+
+    @Test func 备注恰达上限通过() throws {
+        var draft = flatFeeDraft()
+        draft.note = String(repeating: "备", count: 500)
+        #expect(try draft.validated().note.count == 500)
+    }
+
+    @Test func 备注超上限拒绝() {
+        var draft = flatFeeDraft()
+        draft.note = String(repeating: "备", count: 501)
+        #expect(throws: InstallmentPlanDraftError.noteTooLong) { _ = try draft.validated() }
+    }
+
+    @Test func 期数恰达上限通过() throws {
+        var draft = flatFeeDraft()
+        draft.totalPeriods = 600
+        #expect(try draft.validated().totalPeriods == 600)
+    }
+
+    @Test func 期数超上限拒绝() {
+        var draft = flatFeeDraft()
+        draft.totalPeriods = 601
+        #expect(throws: InstallmentPlanDraftError.tooManyPeriods) { _ = try draft.validated() }
+    }
+
+    @Test func 年利率恰达上限通过() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .annuity
+        draft.annualRateBps = 100_000
+        #expect(try draft.validated().annualRateBps == 100_000)
+    }
+
+    @Test func 年利率超上限拒绝() {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .annuity
+        draft.annualRateBps = 100_001
+        #expect(throws: InstallmentPlanDraftError.annualRateTooHigh) { _ = try draft.validated() }
+    }
+
+    @Test func 首期还款日边界通过() throws {
+        var draft = flatFeeDraft()
+        draft.firstDueAt = Date(timeIntervalSince1970: 0)
+        _ = try draft.validated()
+    }
+
+    @Test func 首期还款日越界拒绝() {
+        for ts: TimeInterval in [-1, 4_102_444_800] {
+            var draft = flatFeeDraft()
+            draft.firstDueAt = Date(timeIntervalSince1970: ts)
+            #expect(throws: InstallmentPlanDraftError.firstDueAtOutOfRange) { _ = try draft.validated() }
+        }
+    }
 }

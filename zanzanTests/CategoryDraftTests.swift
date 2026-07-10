@@ -35,4 +35,16 @@ struct CategoryDraftTests {
         let v = try draft.validated()
         #expect(v.iconPrimary == "tag")
     }
+
+    @Test func 名称恰达上限通过() throws {
+        var draft = CategoryDraft()
+        draft.name = String(repeating: "名", count: 100)
+        #expect(try draft.validated().name.count == 100)
+    }
+
+    @Test func 名称超上限拒绝() {
+        var draft = CategoryDraft()
+        draft.name = String(repeating: "名", count: 101)
+        #expect(throws: CategoryDraftError.nameTooLong) { _ = try draft.validated() }
+    }
 }

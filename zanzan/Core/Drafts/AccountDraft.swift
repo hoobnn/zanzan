@@ -30,6 +30,9 @@ struct AccountDraft {
     func validated() throws -> Validated {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw AccountDraftError.emptyName }
+        guard name.count <= DraftLimits.maxNameLength else { throw AccountDraftError.nameTooLong }
+        let subtitle = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard subtitle.count <= DraftLimits.maxNameLength else { throw AccountDraftError.subtitleTooLong }
         // ISO 4217 格式校验：归一化大写后须为三位大写字母
         let currencyCode = currencyCode.trimmingCharacters(in: .whitespaces).uppercased()
         guard currencyCode.count == 3, currencyCode.allSatisfy({ ("A"..."Z").contains($0) }) else {
@@ -57,7 +60,7 @@ struct AccountDraft {
         }
         return Validated(
             name: name,
-            subtitle: subtitle.trimmingCharacters(in: .whitespacesAndNewlines),
+            subtitle: subtitle,
             kind: kind,
             currencyCode: currencyCode,
             initialBalanceMinorUnits: initialBalance,
@@ -89,6 +92,8 @@ extension AccountDraft {
 
 enum AccountDraftError: LocalizedError {
     case emptyName
+    case nameTooLong
+    case subtitleTooLong
     case invalidCurrencyCode
     case invalidInitialBalance
     case invalidCreditLimit
@@ -97,6 +102,8 @@ enum AccountDraftError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "账户名不能为空")
+        case .nameTooLong: String(localized: "账户名不能超过 \(DraftLimits.maxNameLength) 字")
+        case .subtitleTooLong: String(localized: "账户副标题不能超过 \(DraftLimits.maxNameLength) 字")
         case .invalidCurrencyCode: String(localized: "币种代码须为 3 位大写字母（ISO 4217）")
         case .invalidInitialBalance: String(localized: "期初余额格式不正确")
         case .invalidCreditLimit: String(localized: "信用额度格式不正确")

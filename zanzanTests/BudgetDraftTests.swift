@@ -61,4 +61,20 @@ struct BudgetDraftTests {
         draft.periodMonth = month
         #expect(throws: BudgetDraftError.self) { try draft.validated() }
     }
+
+    @Test(arguments: [2000, 2100]) func 年份边界通过(year: Int) throws {
+        var draft = BudgetDraft(ledgerID: ledgerID)
+        draft.amountMinorUnits = 100
+        draft.periodYear = year
+        draft.periodMonth = 1
+        #expect(try draft.validated().periodYear == year)
+    }
+
+    @Test(arguments: [1999, 2101]) func 年份越界被拒(year: Int) {
+        var draft = BudgetDraft(ledgerID: ledgerID)
+        draft.amountMinorUnits = 100
+        draft.periodYear = year
+        draft.periodMonth = 1
+        #expect(throws: BudgetDraftError.invalidYear) { try draft.validated() }
+    }
 }

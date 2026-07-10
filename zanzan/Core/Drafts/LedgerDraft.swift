@@ -10,16 +10,19 @@ struct LedgerDraft {
         var draft = self
         draft.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !draft.name.isEmpty else { throw LedgerDraftError.emptyName }
+        guard draft.name.count <= DraftLimits.maxNameLength else { throw LedgerDraftError.nameTooLong }
         return draft
     }
 }
 
 enum LedgerDraftError: LocalizedError {
     case emptyName
+    case nameTooLong
 
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "账本名不能为空")
+        case .nameTooLong: String(localized: "账本名不能超过 \(DraftLimits.maxNameLength) 字")
         }
     }
 }

@@ -44,4 +44,34 @@ struct TransactionDraftTests {
         draft.fxRateString = "6.8912"
         #expect(try draft.validated().fxRateToBase == Decimal(string: "6.8912"))
     }
+
+    // MARK: - DraftLimits 边界
+
+    @Test func 备注恰达上限通过() throws {
+        var draft = transferDraft()
+        draft.note = String(repeating: "备", count: 500)
+        #expect(try draft.validated().note.count == 500)
+    }
+
+    @Test func 备注超上限拒绝() {
+        var draft = transferDraft()
+        draft.note = String(repeating: "备", count: 501)
+        #expect(throws: TransactionDraftError.noteTooLong) { _ = try draft.validated() }
+    }
+
+    @Test func 记账时间区间边界通过() throws {
+        for ts: TimeInterval in [0, 4_102_444_799] {
+            var draft = transferDraft()
+            draft.occurredAt = Date(timeIntervalSince1970: ts)
+            _ = try draft.validated()
+        }
+    }
+
+    @Test func 记账时间越界拒绝() {
+        for ts: TimeInterval in [-1, 4_102_444_800, 64_060_675_200] { // 含公元 4000 年
+            var draft = transferDraft()
+            draft.occurredAt = Date(timeIntervalSince1970: ts)
+            #expect(throws: TransactionDraftError.occurredAtOutOfRange) { _ = try draft.validated() }
+        }
+    }
 }

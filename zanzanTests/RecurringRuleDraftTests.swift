@@ -147,4 +147,56 @@ struct RecurringRuleDraftTests {
         draft.templateTargetAccountID = accountID
         #expect(throws: RecurringRuleDraftError.self) { try draft.validated() }
     }
+
+    // MARK: - DraftLimits 边界
+
+    @Test func 名称恰达上限通过() throws {
+        var draft = makeDraft()
+        draft.name = String(repeating: "名", count: 100)
+        #expect(try draft.validated().name.count == 100)
+    }
+
+    @Test func 名称超上限拒绝() {
+        var draft = makeDraft()
+        draft.name = String(repeating: "名", count: 101)
+        #expect(throws: RecurringRuleDraftError.nameTooLong) { _ = try draft.validated() }
+    }
+
+    @Test func 备注恰达上限通过() throws {
+        var draft = makeDraft()
+        draft.templateNote = String(repeating: "备", count: 500)
+        #expect(try draft.validated().templateNote.count == 500)
+    }
+
+    @Test func 备注超上限拒绝() {
+        var draft = makeDraft()
+        draft.templateNote = String(repeating: "备", count: 501)
+        #expect(throws: RecurringRuleDraftError.noteTooLong) { _ = try draft.validated() }
+    }
+
+    @Test func 间隔恰达上限通过() throws {
+        var draft = makeDraft()
+        draft.interval = 365
+        #expect(try draft.validated().interval == 365)
+    }
+
+    @Test func 间隔超上限拒绝() {
+        var draft = makeDraft()
+        draft.interval = 366
+        #expect(throws: RecurringRuleDraftError.intervalTooLarge) { _ = try draft.validated() }
+    }
+
+    @Test func 开始时间越界拒绝() {
+        var draft = makeDraft()
+        draft.startAt = Date(timeIntervalSince1970: -1)
+        #expect(throws: RecurringRuleDraftError.dateOutOfRange) { _ = try draft.validated() }
+    }
+
+    @Test func 截止时间边界通过与越界拒绝() throws {
+        var draft = makeDraft()
+        draft.endAt = Date(timeIntervalSince1970: 4_102_444_799) // 区间内最后一秒
+        _ = try draft.validated()
+        draft.endAt = Date(timeIntervalSince1970: 4_102_444_800) // 2100-01-01，越界
+        #expect(throws: RecurringRuleDraftError.dateOutOfRange) { _ = try draft.validated() }
+    }
 }

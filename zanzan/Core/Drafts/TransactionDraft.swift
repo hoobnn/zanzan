@@ -33,7 +33,11 @@ struct TransactionDraft {
             throw TransactionDraftError.invalidAmount
         }
         guard let accountUUID else { throw TransactionDraftError.missingAccount }
+        guard DraftLimits.occurredAtRange.contains(occurredAt) else {
+            throw TransactionDraftError.occurredAtOutOfRange
+        }
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count <= DraftLimits.maxNoteLength else { throw TransactionDraftError.noteTooLong }
         // Draft 层只做格式/正数校验；币种相关语义校验（必填/归 nil）在 Service 层
         let fxRate = try parsedFxRate()
 
@@ -96,6 +100,8 @@ enum TransactionDraftError: LocalizedError {
     case invalidFee
     case invalidFxRate
     case invalidTargetAmount
+    case noteTooLong
+    case occurredAtOutOfRange
 
     var errorDescription: String? {
         switch self {
@@ -107,6 +113,8 @@ enum TransactionDraftError: LocalizedError {
         case .invalidFee: String(localized: "手续费格式不正确")
         case .invalidFxRate: String(localized: "汇率须为大于 0 的数字")
         case .invalidTargetAmount: String(localized: "到账金额须为大于 0 的数字（最多两位小数）")
+        case .noteTooLong: String(localized: "备注不能超过 \(DraftLimits.maxNoteLength) 字")
+        case .occurredAtOutOfRange: String(localized: "记账时间超出可记账范围")
         }
     }
 }

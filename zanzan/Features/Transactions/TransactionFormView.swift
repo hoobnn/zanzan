@@ -79,7 +79,7 @@ struct TransactionFormView: View {
             if draft.accountUUID == nil { draft.accountUUID = accounts.first?.uuid }
         }
         .sheet(isPresented: $isPickingTime) {
-            DatePicker("记账时间", selection: $draft.occurredAt)
+            DatePicker("记账时间", selection: $draft.occurredAt, in: DraftLimits.occurredAtPickerRange)
                 .datePickerStyle(.graphical)
                 .padding()
                 .presentationDetents([.medium, .large])

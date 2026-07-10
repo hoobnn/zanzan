@@ -47,4 +47,16 @@ struct TagDraftTests {
         #expect(draft.colorID == "green")
         #expect(draft.ledgerID == tag.ledgerID)
     }
+
+    @Test func 名称恰达上限通过() throws {
+        var draft = TagDraft()
+        draft.name = String(repeating: "名", count: 100)
+        #expect(try draft.validated().name.count == 100)
+    }
+
+    @Test func 名称超上限拒绝() {
+        var draft = TagDraft()
+        draft.name = String(repeating: "名", count: 101)
+        #expect(throws: TagDraftError.nameTooLong) { _ = try draft.validated() }
+    }
 }

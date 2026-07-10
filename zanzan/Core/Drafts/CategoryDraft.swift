@@ -18,6 +18,7 @@ struct CategoryDraft {
     func validated() throws -> Validated {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw CategoryDraftError.emptyName }
+        guard name.count <= DraftLimits.maxNameLength else { throw CategoryDraftError.nameTooLong }
         guard kind != .transfer else { throw CategoryDraftError.invalidKind }
         let icon = iconPrimary.trimmingCharacters(in: .whitespaces)
         return Validated(
@@ -42,11 +43,13 @@ extension CategoryDraft {
 
 enum CategoryDraftError: LocalizedError {
     case emptyName
+    case nameTooLong
     case invalidKind
 
     var errorDescription: String? {
         switch self {
         case .emptyName: String(localized: "分类名不能为空")
+        case .nameTooLong: String(localized: "分类名不能超过 \(DraftLimits.maxNameLength) 字")
         case .invalidKind: String(localized: "分类方向只能是支出或收入")
         }
     }
