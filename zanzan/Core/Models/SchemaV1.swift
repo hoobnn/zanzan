@@ -15,7 +15,7 @@ enum SchemaV1: VersionedSchema {
             TransactionLink.self,
             Budget.self,
             CreditPool.self,
-            InstallmentPlan.self,
+            SchemaV1.InstallmentPlan.self,
             InstallmentPeriod.self,
             RecurringRule.self,
             ImportBatch.self,

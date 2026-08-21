@@ -35,6 +35,18 @@ enum AmortizationKind: String, Codable, CaseIterable, Sendable {
     case annuity, linearPrincipal, interestOnly, flatFee, custom
 }
 
+enum ChargeCollectionKind: String, Codable, CaseIterable, Sendable {
+    case perPeriod, upfrontFirstPeriod
+}
+
+enum InstallmentRoundingKind: String, Codable, CaseIterable, Sendable {
+    case downToMinorUnit, nearestMinorUnit, nearestMajorUnit
+}
+
+enum InstallmentRemainderKind: String, Codable, CaseIterable, Sendable {
+    case firstPeriod, lastPeriod
+}
+
 enum InstallmentPlanStatus: String, Codable, CaseIterable, Sendable {
     case active, completed, settledEarly
 }

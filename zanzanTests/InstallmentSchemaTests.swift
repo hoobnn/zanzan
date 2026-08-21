@@ -19,6 +19,12 @@ struct InstallmentSchemaTests {
             amortizationKind: .flatFee,
             firstDueAt: .now
         )
+        plan.totalChargeMinorUnits = 60_000
+        plan.chargeCollectionKindRawValue = ChargeCollectionKind.upfrontFirstPeriod.rawValue
+        plan.principalRoundingKindRawValue = InstallmentRoundingKind.nearestMajorUnit.rawValue
+        plan.principalRemainderKindRawValue = InstallmentRemainderKind.firstPeriod.rawValue
+        plan.chargeRoundingKindRawValue = InstallmentRoundingKind.nearestMinorUnit.rawValue
+        plan.chargeRemainderKindRawValue = InstallmentRemainderKind.firstPeriod.rawValue
         context.insert(plan)
         try context.save()
 
@@ -30,6 +36,12 @@ struct InstallmentSchemaTests {
         #expect(fetched.closedAt == nil)
         #expect(!fetched.isAutoSettle)
         #expect(fetched.totalPeriods == 24)
+        #expect(fetched.totalChargeMinorUnits == 60_000)
+        #expect(fetched.chargeCollectionKind == .upfrontFirstPeriod)
+        #expect(fetched.principalRoundingKind == .nearestMajorUnit)
+        #expect(fetched.principalRemainderKind == .firstPeriod)
+        #expect(fetched.chargeRoundingKind == .nearestMinorUnit)
+        #expect(fetched.chargeRemainderKind == .firstPeriod)
     }
 
     @Test func 期数行往返与回填字段() throws {

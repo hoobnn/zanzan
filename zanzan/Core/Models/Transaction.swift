@@ -12,7 +12,7 @@ final class Transaction {
     // 核心
     /// expense / income / transfer；终生不可改写（修 iCost 报销陷阱）
     var kindRawValue: String = ""
-    /// 金额（分，正数）
+    /// 金额（最小货币单位；普通流水为正，分期纯息期可为 0 且 fee 必须为正）
     var amountMinorUnits: Int = 0
     /// 业务发生时间（可回填补记）
     var occurredAt: Date = Date.now
@@ -88,18 +88,31 @@ final class Transaction {
     /// 转出方 delta = −(amount + fee)，转入方 = +(targetAmount ?? amount)（设计文档 5.4）。
     /// 语义未知的流水不影响余额（读路径按「未知」处理）。
     func balanceDeltaMinorUnits(for accountUUID: UUID) -> Int {
+        // 兼容既有展示/测试 API；生产聚合必须调用 throwing 版本，坏数据不得令主线程 trap。
+        (try? checkedBalanceDeltaMinorUnits(for: accountUUID)) ?? 0
+    }
+
+    func checkedBalanceDeltaMinorUnits(for accountUUID: UUID) throws -> Int {
         guard let kind else { return 0 }
         let isSource = account?.uuid == accountUUID
         let isTarget = targetAccount?.uuid == accountUUID
         switch kind {
         case .expense:
-            return isSource ? -(amountMinorUnits + feeMinorUnits) : 0
+            return isSource
+                ? try MoneyArithmetic.negate(MoneyArithmetic.add(amountMinorUnits, feeMinorUnits))
+                : 0
         case .income:
-            return isSource ? amountMinorUnits - feeMinorUnits : 0
+            return isSource ? try MoneyArithmetic.subtract(amountMinorUnits, feeMinorUnits) : 0
         case .transfer:
             var delta = 0
-            if isSource { delta -= amountMinorUnits + feeMinorUnits }
-            if isTarget { delta += targetAmountMinorUnits ?? amountMinorUnits }
+            if isSource {
+                delta = try MoneyArithmetic.subtract(
+                    delta, MoneyArithmetic.add(amountMinorUnits, feeMinorUnits)
+                )
+            }
+            if isTarget {
+                delta = try MoneyArithmetic.add(delta, targetAmountMinorUnits ?? amountMinorUnits)
+            }
             return delta
         }
     }
