@@ -7,6 +7,10 @@ import Testing
 struct InstallmentServiceTests {
     // MARK: - 夹具
 
+    private enum InjectedSaveError: Error, Equatable {
+        case failed
+    }
+
     private struct Fixture {
         let context: ModelContext
         let ledger: Ledger
@@ -55,6 +59,18 @@ struct InstallmentServiceTests {
         return draft
     }
 
+    private func apply(
+        _ preset: InstallmentCalculationPreset,
+        to draft: inout InstallmentPlanDraft
+    ) {
+        let rules = preset.rules
+        draft.chargeCollectionKind = rules.chargeCollectionKind
+        draft.principalRoundingKind = rules.principalRoundingKind
+        draft.principalRemainderKind = rules.principalRemainderKind
+        draft.chargeRoundingKind = rules.chargeRoundingKind
+        draft.chargeRemainderKind = rules.chargeRemainderKind
+    }
+
     private func periods(of plan: InstallmentPlan, in context: ModelContext) throws -> [InstallmentPeriod] {
         let planID = plan.uuid
         return try context.fetch(FetchDescriptor<InstallmentPeriod>(
@@ -89,6 +105,45 @@ struct InstallmentServiceTests {
         let rows = try periods(of: plan, in: f.context)
         #expect(rows.map(\.principalMinorUnits) == [3_333, 3_333, 3_334]) // 尾差归末期（5.9）
         #expect(rows.reduce(0) { $0 + $1.principalMinorUnits } == 10_000)  // Σ 期本金 == 总本金
+    }
+
+    @Test func 工行首尾差与首期一次息费按规则物化() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+
+        var perPeriodDraft = flatFeeDraft(f)
+        perPeriodDraft.flatFeePerPeriodMinorUnits = nil
+        perPeriodDraft.totalChargeMinorUnits = 100
+        apply(.icbcPerPeriod, to: &perPeriodDraft)
+        let perPeriodPlan = try service.createPlan(perPeriodDraft, calendar: calendar)
+        let perPeriodRows = try periods(of: perPeriodPlan, in: f.context)
+        #expect(perPeriodRows.map(\.principalMinorUnits) == [3_334, 3_333, 3_333])
+        #expect(perPeriodRows.map(\.interestMinorUnits) == [34, 33, 33])
+
+        var upfrontDraft = flatFeeDraft(f)
+        upfrontDraft.name = "工行首期收取"
+        upfrontDraft.flatFeePerPeriodMinorUnits = nil
+        upfrontDraft.totalChargeMinorUnits = 100
+        apply(.icbcUpfront, to: &upfrontDraft)
+        let upfrontPlan = try service.createPlan(upfrontDraft, calendar: calendar)
+        let upfrontRows = try periods(of: upfrontPlan, in: f.context)
+        #expect(upfrontRows.map(\.principalMinorUnits) == [3_334, 3_333, 3_333])
+        #expect(upfrontRows.map(\.interestMinorUnits) == [100, 0, 0])
+    }
+
+    @Test func 农行元位取整示例保持本息费各自守恒() throws {
+        let f = try makeFixture()
+        var draft = flatFeeDraft(f, principal: 10_100)
+        draft.flatFeePerPeriodMinorUnits = nil
+        draft.totalChargeMinorUnits = 100
+        apply(.abc, to: &draft)
+        let plan = try InstallmentService(context: f.context).createPlan(draft, calendar: calendar)
+
+        let rows = try periods(of: plan, in: f.context)
+        #expect(rows.map(\.principalMinorUnits) == [3_400, 3_400, 3_300])
+        #expect(rows.map(\.interestMinorUnits) == [33, 33, 34])
+        #expect(rows.reduce(0) { $0 + $1.principalMinorUnits } == 10_100)
+        #expect(rows.reduce(0) { $0 + $1.interestMinorUnits } == 100)
     }
 
     @Test func 等额本息期表_利息按剩余本金月利率_月供恒定() throws {
@@ -139,6 +194,53 @@ struct InstallmentServiceTests {
         #expect(rows.map(\.interestMinorUnits) == [0, 0, 0])
     }
 
+    @Test func 先息后本纯息期可生成零本金息费流水() throws {
+        let f = try makeFixture()
+        var draft = flatFeeDraft(f)
+        draft.kind = .loan
+        draft.accountID = f.mortgage.uuid
+        draft.amortizationKind = .interestOnly
+        draft.annualRateBps = 1_200
+        draft.flatFeePerPeriodMinorUnits = nil
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(draft, calendar: calendar)
+
+        let rows = try periods(of: plan, in: f.context)
+        #expect(rows.map(\.principalMinorUnits) == [0, 0, 10_000])
+        #expect(rows.map(\.interestMinorUnits) == [100, 100, 100])
+
+        let tx = try service.settlePeriod(
+            planUUID: plan.uuid,
+            periodIndex: 1,
+            fromAccountID: f.cash.uuid,
+            at: date(2026, 8, 10)
+        )
+        #expect(tx.amountMinorUnits == 0)
+        #expect(tx.feeMinorUnits == 100)
+        #expect(tx.balanceDeltaMinorUnits(for: f.cash.uuid) == -100)
+        #expect(tx.balanceDeltaMinorUnits(for: f.mortgage.uuid) == 0)
+        #expect(rows[0].status == .settled)
+    }
+
+    @Test func 极限本金与利率生成期表不发生整数溢出() throws {
+        let f = try makeFixture()
+        var draft = flatFeeDraft(
+            f,
+            principal: MoneyAmount.maxAbsoluteMinorUnits,
+            periods: 1
+        )
+        draft.kind = .loan
+        draft.accountID = f.mortgage.uuid
+        draft.amortizationKind = .linearPrincipal
+        draft.annualRateBps = DraftLimits.maxAnnualRateBps
+        draft.flatFeePerPeriodMinorUnits = nil
+
+        let plan = try InstallmentService(context: f.context).createPlan(draft, calendar: calendar)
+        let row = try #require(try periods(of: plan, in: f.context).first)
+        #expect(row.principalMinorUnits == MoneyAmount.maxAbsoluteMinorUnits)
+        #expect(row.interestMinorUnits == 833_333_333_333_333)
+    }
+
     @Test func custom期表照录() throws {
         let f = try makeFixture()
         var draft = flatFeeDraft(f, principal: 10_000, periods: 3)
@@ -182,6 +284,397 @@ struct InstallmentServiceTests {
         draft.accountID = UUID()
         #expect(throws: InstallmentServiceError.accountNotFound) {
             try InstallmentService(context: f.context).createPlan(draft, calendar: self.calendar)
+        }
+    }
+
+    @Test func 归档账本或不可记账债务账户阻断且零写入() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+
+        f.ledger.isArchived = true
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.ledgerNotFound) {
+            try service.createPlan(self.flatFeeDraft(f), calendar: self.calendar)
+        }
+
+        f.ledger.isArchived = false
+        f.card.isSelectableForRecord = false
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.accountNotFound) {
+            try service.createPlan(self.flatFeeDraft(f), calendar: self.calendar)
+        }
+        #expect(try f.context.fetchCount(FetchDescriptor<InstallmentPlan>()) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<InstallmentPeriod>()) == 0)
+    }
+
+    @Test func 创建保存失败回滚新增计划与期表() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(
+            context: f.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+
+        #expect(throws: InjectedSaveError.failed) {
+            try service.createPlan(self.flatFeeDraft(f), calendar: self.calendar)
+        }
+        #expect(try f.context.fetchCount(FetchDescriptor<InstallmentPlan>()) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<InstallmentPeriod>()) == 0)
+    }
+
+    @Test func 结算保存失败回滚流水与计划期状态() throws {
+        let f = try makeFixture()
+        let plan = try InstallmentService(context: f.context)
+            .createPlan(flatFeeDraft(f), calendar: calendar)
+        let service = InstallmentService(
+            context: f.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+
+        #expect(throws: InjectedSaveError.failed) {
+            try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 1,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(plan.status == .active)
+        #expect(plan.closedAt == nil)
+        #expect(try periods(of: plan, in: f.context).allSatisfy { $0.status == .pending })
+        #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 0)
+    }
+
+    @Test func 软删保存失败回滚计划与期表标记() throws {
+        let f = try makeFixture()
+        let plan = try InstallmentService(context: f.context)
+            .createPlan(flatFeeDraft(f), calendar: calendar)
+        let service = InstallmentService(
+            context: f.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+
+        #expect(throws: InjectedSaveError.failed) {
+            try service.softDeletePlan(uuid: plan.uuid, at: self.date(2026, 8, 15))
+        }
+        #expect(!plan.isSoftDeleted)
+        #expect(try periods(of: plan, in: f.context).allSatisfy { !$0.isSoftDeleted })
+    }
+
+    @Test func 提前结清与三个撤销命令保存失败均回滚() throws {
+        let earlyFixture = try makeFixture()
+        let earlyPlan = try InstallmentService(context: earlyFixture.context)
+            .createPlan(flatFeeDraft(earlyFixture), calendar: calendar)
+        let failingEarlyService = InstallmentService(
+            context: earlyFixture.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+        #expect(throws: InjectedSaveError.failed) {
+            try failingEarlyService.settleEarly(
+                planUUID: earlyPlan.uuid,
+                fromAccountID: earlyFixture.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(earlyPlan.status == .active)
+        #expect(earlyPlan.closedAt == nil)
+        #expect(
+            try periods(of: earlyPlan, in: earlyFixture.context)
+                .allSatisfy { $0.status == .pending }
+        )
+        #expect(try earlyFixture.context.fetchCount(FetchDescriptor<Transaction>()) == 0)
+
+        let undoPeriodFixture = try makeFixture()
+        let undoPeriodService = InstallmentService(context: undoPeriodFixture.context)
+        let undoPeriodPlan = try undoPeriodService.createPlan(
+            flatFeeDraft(undoPeriodFixture),
+            calendar: calendar
+        )
+        let periodTransaction = try undoPeriodService.settlePeriod(
+            planUUID: undoPeriodPlan.uuid,
+            periodIndex: 1,
+            fromAccountID: undoPeriodFixture.cash.uuid,
+            at: date(2026, 8, 10)
+        )
+        let failingUndoPeriodService = InstallmentService(
+            context: undoPeriodFixture.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+        #expect(throws: InjectedSaveError.failed) {
+            try failingUndoPeriodService.undoSettlePeriod(
+                planUUID: undoPeriodPlan.uuid,
+                periodIndex: 1,
+                at: self.date(2026, 8, 11)
+            )
+        }
+        #expect(!periodTransaction.isSoftDeleted)
+        #expect(
+            try periods(of: undoPeriodPlan, in: undoPeriodFixture.context).first?.status
+                == .settled
+        )
+
+        let undoEarlyFixture = try makeFixture()
+        let undoEarlyService = InstallmentService(context: undoEarlyFixture.context)
+        let undoEarlyPlan = try undoEarlyService.createPlan(
+            flatFeeDraft(undoEarlyFixture),
+            calendar: calendar
+        )
+        let earlyTransaction = try undoEarlyService.settleEarly(
+            planUUID: undoEarlyPlan.uuid,
+            fromAccountID: undoEarlyFixture.cash.uuid,
+            at: date(2026, 8, 10)
+        )
+        let failingUndoEarlyService = InstallmentService(
+            context: undoEarlyFixture.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+        #expect(throws: InjectedSaveError.failed) {
+            try failingUndoEarlyService.undoSettleEarly(
+                planUUID: undoEarlyPlan.uuid,
+                at: self.date(2026, 8, 11)
+            )
+        }
+        #expect(!earlyTransaction.isSoftDeleted)
+        #expect(undoEarlyPlan.status == .settledEarly)
+        #expect(
+            try periods(of: undoEarlyPlan, in: undoEarlyFixture.context)
+                .allSatisfy { $0.status == .cancelled }
+        )
+
+        let restoreFixture = try makeFixture()
+        let restoreService = InstallmentService(context: restoreFixture.context)
+        let restorePlan = try restoreService.createPlan(
+            flatFeeDraft(restoreFixture),
+            calendar: calendar
+        )
+        try restoreService.softDeletePlan(
+            uuid: restorePlan.uuid,
+            at: date(2026, 8, 10)
+        )
+        let failingRestoreService = InstallmentService(
+            context: restoreFixture.context,
+            saveAction: { throw InjectedSaveError.failed }
+        )
+        #expect(throws: InjectedSaveError.failed) {
+            try failingRestoreService.undoSoftDeletePlan(
+                uuid: restorePlan.uuid,
+                at: self.date(2026, 8, 11)
+            )
+        }
+        #expect(restorePlan.isSoftDeleted)
+        #expect(
+            try periods(of: restorePlan, in: restoreFixture.context)
+                .allSatisfy(\.isSoftDeleted)
+        )
+    }
+
+    @Test func 未知计划期状态与保留自动结算字段阻断写入() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        let rows = try periods(of: plan, in: f.context)
+
+        plan.statusRawValue = "future-status"
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.planStatusUnknown) {
+            try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 1,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+
+        plan.statusRawValue = InstallmentPlanStatus.active.rawValue
+        rows[1].statusRawValue = "future-period-status"
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.periodStatusUnknown) {
+            try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 1,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+
+        rows[1].statusRawValue = InstallmentPeriodStatus.pending.rawValue
+        plan.isAutoSettle = true
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.automaticSettlementUnsupported) {
+            try service.settleEarly(
+                planUUID: plan.uuid,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 0)
+    }
+
+    @Test func 未知摊还收取取整与尾差语义逐项阻断写入() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        let corruptions: [(Bool) -> Void] = [
+            { invalid in
+                plan.amortizationKindRawValue = invalid ? "future-amortization" : AmortizationKind.flatFee.rawValue
+            },
+            { invalid in
+                plan.chargeCollectionKindRawValue = invalid ? "future-collection" : ChargeCollectionKind.perPeriod.rawValue
+            },
+            { invalid in
+                plan.principalRoundingKindRawValue = invalid
+                    ? "future-principal-rounding"
+                    : InstallmentRoundingKind.downToMinorUnit.rawValue
+            },
+            { invalid in
+                plan.principalRemainderKindRawValue = invalid
+                    ? "future-principal-remainder"
+                    : InstallmentRemainderKind.lastPeriod.rawValue
+            },
+            { invalid in
+                plan.chargeRoundingKindRawValue = invalid
+                    ? "future-charge-rounding"
+                    : InstallmentRoundingKind.downToMinorUnit.rawValue
+            },
+            { invalid in
+                plan.chargeRemainderKindRawValue = invalid
+                    ? "future-charge-remainder"
+                    : InstallmentRemainderKind.lastPeriod.rawValue
+            },
+        ]
+
+        for corrupt in corruptions {
+            corrupt(true)
+            try f.context.save()
+            #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+                try service.settlePeriod(
+                    planUUID: plan.uuid,
+                    periodIndex: 1,
+                    fromAccountID: f.cash.uuid,
+                    at: self.date(2026, 8, 10)
+                )
+            }
+            corrupt(false)
+            try f.context.save()
+        }
+        #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 0)
+    }
+
+    @Test func 重复缺失期序与本金不守恒阻断写入() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        let rows = try periods(of: plan, in: f.context)
+
+        rows[1].periodIndex = 1
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.periodSequenceInvalid) {
+            try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 1,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+
+        rows[1].periodIndex = 2
+        rows[2].isSoftDeleted = true
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.periodSequenceInvalid) {
+            try service.settleEarly(
+                planUUID: plan.uuid,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+
+        rows[2].isSoftDeleted = false
+        rows[2].principalMinorUnits += 1
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.periodPrincipalMismatch) {
+            try service.softDeletePlan(uuid: plan.uuid, at: self.date(2026, 8, 10))
+        }
+        #expect(!plan.isSoftDeleted)
+        #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 0)
+    }
+
+    @Test func 所有既有计划写命令共享计算语义完整性守卫() throws {
+        let activeFixture = try makeFixture()
+        let activeService = InstallmentService(context: activeFixture.context)
+        let activePlan = try activeService.createPlan(
+            flatFeeDraft(activeFixture),
+            calendar: calendar
+        )
+        activePlan.chargeCollectionKindRawValue = "future-collection"
+        try activeFixture.context.save()
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try activeService.settlePeriod(
+                planUUID: activePlan.uuid,
+                periodIndex: 1,
+                fromAccountID: activeFixture.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try activeService.settleEarly(
+                planUUID: activePlan.uuid,
+                fromAccountID: activeFixture.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try activeService.softDeletePlan(
+                uuid: activePlan.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+
+        let periodFixture = try makeFixture()
+        let periodService = InstallmentService(context: periodFixture.context)
+        let periodPlan = try periodService.createPlan(flatFeeDraft(periodFixture), calendar: calendar)
+        _ = try periodService.settlePeriod(
+            planUUID: periodPlan.uuid,
+            periodIndex: 1,
+            fromAccountID: periodFixture.cash.uuid,
+            at: date(2026, 8, 10)
+        )
+        periodPlan.chargeCollectionKindRawValue = "future-collection"
+        try periodFixture.context.save()
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try periodService.undoSettlePeriod(
+                planUUID: periodPlan.uuid,
+                periodIndex: 1,
+                at: self.date(2026, 8, 11)
+            )
+        }
+
+        let earlyFixture = try makeFixture()
+        let earlyService = InstallmentService(context: earlyFixture.context)
+        let earlyPlan = try earlyService.createPlan(flatFeeDraft(earlyFixture), calendar: calendar)
+        _ = try earlyService.settleEarly(
+            planUUID: earlyPlan.uuid,
+            fromAccountID: earlyFixture.cash.uuid,
+            at: date(2026, 8, 10)
+        )
+        earlyPlan.chargeCollectionKindRawValue = "future-collection"
+        try earlyFixture.context.save()
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try earlyService.undoSettleEarly(
+                planUUID: earlyPlan.uuid,
+                at: self.date(2026, 8, 11)
+            )
+        }
+
+        let deletedFixture = try makeFixture()
+        let deletedService = InstallmentService(context: deletedFixture.context)
+        let deletedPlan = try deletedService.createPlan(flatFeeDraft(deletedFixture), calendar: calendar)
+        try deletedService.softDeletePlan(uuid: deletedPlan.uuid, at: date(2026, 8, 10))
+        deletedPlan.chargeCollectionKindRawValue = "future-collection"
+        try deletedFixture.context.save()
+        #expect(throws: InstallmentServiceError.planCalculationRuleUnknown) {
+            try deletedService.undoSoftDeletePlan(
+                uuid: deletedPlan.uuid,
+                at: self.date(2026, 8, 11)
+            )
         }
     }
 
@@ -240,6 +733,22 @@ struct InstallmentServiceTests {
                 planUUID: plan.uuid, periodIndex: 1, fromAccountID: f.cash.uuid, at: self.date(2026, 8, 11)
             )
         }
+    }
+
+    @Test func 禁止跳期且失败不改变期表状态() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+
+        #expect(throws: InstallmentServiceError.mustSettleInOrder) {
+            try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 2,
+                fromAccountID: f.cash.uuid,
+                at: self.date(2026, 8, 10)
+            )
+        }
+        #expect(try periods(of: plan, in: f.context).allSatisfy { $0.status == .pending })
     }
 
     @Test func 从债务账户自身还款被拒() throws {
@@ -308,6 +817,26 @@ struct InstallmentServiceTests {
         #expect(rows[1].settledTransactionID == nil) // 取消期不回填流水
         #expect(plan.status == .settledEarly)
         #expect(plan.closedAt == settledAt)
+    }
+
+    @Test func 首期一次息费未付时提前结清仍计入结清费用() throws {
+        let f = try makeFixture()
+        var draft = flatFeeDraft(f)
+        draft.flatFeePerPeriodMinorUnits = nil
+        draft.totalChargeMinorUnits = 300
+        apply(.icbcUpfront, to: &draft)
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(draft, calendar: calendar)
+
+        let tx = try service.settleEarly(
+            planUUID: plan.uuid,
+            fromAccountID: f.cash.uuid,
+            penaltyMinorUnits: 500,
+            at: date(2026, 8, 9)
+        )
+        #expect(tx.amountMinorUnits == 10_000)
+        #expect(tx.feeMinorUnits == 800) // 违约金 500 + 尚未支付的首期一次息费 300
+        #expect(try periods(of: plan, in: f.context).allSatisfy { $0.status == .cancelled })
     }
 
     @Test func 提前结清后再记期与重复结清均被阻断() throws {
@@ -441,6 +970,36 @@ struct InstallmentServiceTests {
         #expect(period.status == .settled)
     }
 
+    @Test func 只能撤销最近一期且失败不改变已记状态() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        for index in 1...2 {
+            _ = try service.settlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: index,
+                fromAccountID: f.cash.uuid,
+                at: date(2026, 8, 10 + index)
+            )
+        }
+
+        #expect(throws: InstallmentServiceError.mustUndoLatest) {
+            try service.undoSettlePeriod(
+                planUUID: plan.uuid,
+                periodIndex: 1,
+                at: self.date(2026, 8, 13)
+            )
+        }
+        #expect(try periods(of: plan, in: f.context).map(\.status) == [.settled, .settled, .pending])
+
+        try service.undoSettlePeriod(
+            planUUID: plan.uuid,
+            periodIndex: 2,
+            at: date(2026, 8, 14)
+        )
+        #expect(try periods(of: plan, in: f.context).map(\.status) == [.settled, .pending, .pending])
+    }
+
     @Test func 期供流水已被软删时撤销仍回退期状态_兜底解卡() throws {
         let f = try makeFixture()
         let service = InstallmentService(context: f.context)
@@ -543,5 +1102,33 @@ struct InstallmentServiceTests {
         #expect(!plan.isSoftDeleted)
         let allPeriodsRestored = try periods(of: plan, in: f.context).allSatisfy { !$0.isSoftDeleted }
         #expect(allPeriodsRestored)
+    }
+
+    @Test func 恢复计划会先校验账本与债务账户() throws {
+        let f = try makeFixture()
+        let service = InstallmentService(context: f.context)
+        let plan = try service.createPlan(flatFeeDraft(f), calendar: calendar)
+        try service.softDeletePlan(uuid: plan.uuid, at: date(2026, 8, 15))
+
+        f.ledger.isArchived = true
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.ledgerNotFound) {
+            try service.undoSoftDeletePlan(uuid: plan.uuid, at: self.date(2026, 8, 16))
+        }
+        #expect(plan.isSoftDeleted)
+        #expect(try periods(of: plan, in: f.context).allSatisfy(\.isSoftDeleted))
+
+        f.ledger.isArchived = false
+        f.card.isArchived = true
+        try f.context.save()
+        #expect(throws: InstallmentServiceError.accountNotFound) {
+            try service.undoSoftDeletePlan(uuid: plan.uuid, at: self.date(2026, 8, 17))
+        }
+        #expect(plan.isSoftDeleted)
+
+        f.card.isArchived = false
+        try f.context.save()
+        try service.undoSoftDeletePlan(uuid: plan.uuid, at: date(2026, 8, 18))
+        #expect(!plan.isSoftDeleted)
     }
 }

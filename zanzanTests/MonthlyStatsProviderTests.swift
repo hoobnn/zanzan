@@ -209,6 +209,64 @@ struct MonthlyStatsProviderTests {
         #expect(foodStat.totalMinorUnits == 36_000) // 分类冲减与总额同口径
     }
 
+    @Test func 跨币种退款总额与排行都按原单快照冲减() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        let original = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5)
+        try markForeign(original, rate: "7.2") // 原支出折本位币 72_000
+
+        let settlement = Transaction(
+            kind: .income, amountMinorUnits: 71_500,
+            occurredAt: Calendar.current.date(
+                from: DateComponents(year: 2026, month: 7, day: 10)
+            )!,
+            ledgerID: env.ledgerID
+        )
+        settlement.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        settlement.currencyCode = "CNY"
+        env.context.insert(settlement)
+        env.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: settlement.uuid,
+            kind: .refund,
+            amountMinorUnits: 10_000
+        ))
+        try env.context.save()
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 0)
+        #expect(stats.expenseRanking.first { $0.category.uuid == food.uuid }?.totalMinorUnits == 0)
+    }
+
+    @Test func 不计统计原单的退款不会产生负支出() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        let original = try record(env, kind: .expense, amount: "100", categoryUUID: food.uuid, day: 5)
+        original.isExcludedFromStats = true
+        let settlement = Transaction(
+            kind: .income, amountMinorUnits: 10_000,
+            occurredAt: Calendar.current.date(
+                from: DateComponents(year: 2026, month: 7, day: 10)
+            )!,
+            ledgerID: env.ledgerID
+        )
+        settlement.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        env.context.insert(settlement)
+        env.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: settlement.uuid,
+            kind: .refund,
+            amountMinorUnits: 10_000
+        ))
+        try env.context.save()
+
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(stats.expenseTotalMinorUnits == 0)
+        #expect(stats.expenseRanking.isEmpty)
+    }
+
     @Test func 外币转账手续费折算计入fee口径() throws {
         let env = try makeEnv()
         var targetDraft = AccountDraft()

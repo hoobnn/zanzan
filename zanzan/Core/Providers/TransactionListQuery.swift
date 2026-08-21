@@ -71,27 +71,64 @@ enum TransactionListGrouping {
     }
 
     /// 组序月降、日降；isExcludedFromStats 的流水照常在 items，仅不计小计（stats 派生已归零）。
-    static func monthGroups(of transactions: [Transaction], calendar: Calendar = .current) -> [MonthGroup] {
+    static func monthGroups(
+        of transactions: [Transaction],
+        context: ModelContext,
+        calendar: Calendar = .current
+    ) throws -> [MonthGroup] {
+        let refundAdjustments = try RefundAdjustmentResolver
+            .adjustments(in: transactions, context: context)
+            .filter { !$0.isOriginalExcludedFromStats }
+        var refundExpenseBySettlement: [UUID: Int] = [:]
+        for adjustment in refundAdjustments {
+            refundExpenseBySettlement[adjustment.settlementTransactionID] =
+                try MoneyArithmetic.add(
+                    refundExpenseBySettlement[adjustment.settlementTransactionID, default: 0],
+                    adjustment.amountMinorUnits
+                )
+        }
+
+        func expenseAmount(for transaction: Transaction) throws -> Int {
+            guard transaction.kind == .income, transaction.settlementKind == .refund else {
+                return try transaction.checkedStatsExpenseMinorUnits()
+            }
+            guard !transaction.isExcludedFromStats else { return 0 }
+            return try MoneyArithmetic.add(
+                transaction.checkedStatsFeeMinorUnits(),
+                refundExpenseBySettlement[transaction.uuid, default: 0]
+            )
+        }
+
         let byMonth = Dictionary(grouping: transactions) {
             calendar.date(from: calendar.dateComponents([.year, .month], from: $0.occurredAt)) ?? $0.occurredAt
         }
-        return byMonth
+        return try byMonth
             .sorted { $0.key > $1.key }
             .map { month, monthItems in
-                let days = Dictionary(grouping: monthItems) { calendar.startOfDay(for: $0.occurredAt) }
+                let days = try Dictionary(grouping: monthItems) {
+                    calendar.startOfDay(for: $0.occurredAt)
+                }
                     .sorted { $0.key > $1.key }
                     .map { day, dayItems in
                         DayGroup(
                             day: day,
-                            incomeTotalMinorUnits: dayItems.reduce(0) { $0 + $1.statsIncomeMinorUnits },
-                            expenseTotalMinorUnits: dayItems.reduce(0) { $0 + $1.statsExpenseMinorUnits },
+                            incomeTotalMinorUnits: try MoneyArithmetic.sum(
+                                dayItems.map { try $0.checkedStatsIncomeMinorUnits() }
+                            ),
+                            expenseTotalMinorUnits: try MoneyArithmetic.sum(
+                                dayItems.map { try expenseAmount(for: $0) }
+                            ),
                             items: dayItems
                         )
                     }
                 return MonthGroup(
                     month: month,
-                    incomeTotalMinorUnits: days.reduce(0) { $0 + $1.incomeTotalMinorUnits },
-                    expenseTotalMinorUnits: days.reduce(0) { $0 + $1.expenseTotalMinorUnits },
+                    incomeTotalMinorUnits: try MoneyArithmetic.sum(
+                        days.map(\.incomeTotalMinorUnits)
+                    ),
+                    expenseTotalMinorUnits: try MoneyArithmetic.sum(
+                        days.map(\.expenseTotalMinorUnits)
+                    ),
                     days: days
                 )
             }

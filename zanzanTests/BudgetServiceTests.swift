@@ -97,10 +97,42 @@ struct BudgetServiceTests {
         }
     }
 
+    @Test func 创建预算拒绝不存在或归档的账本与分类() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+
+        var missingLedgerDraft = makeDraft(env)
+        missingLedgerDraft.ledgerID = UUID()
+        #expect(throws: BudgetServiceError.ledgerNotFound) {
+            try service.createBudget(missingLedgerDraft)
+        }
+
+        let ledger = try #require(try env.context.fetch(FetchDescriptor<Ledger>()).first)
+        ledger.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.ledgerArchived) {
+            try service.createBudget(self.makeDraft(env))
+        }
+
+        ledger.isArchived = false
+        let dining = try makeCategory(env, name: "餐饮")
+        dining.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.categoryArchived) {
+            try service.createBudget(self.makeDraft(env, categoryID: dining.uuid))
+        }
+        #expect(try budgetCount(env) == 0)
+    }
+
     @Test func 金额非正经草稿被拒() throws {
         let env = try makeEnv()
         #expect(throws: BudgetDraftError.self) {
             try BudgetService(context: env.context).createBudget(makeDraft(env, amount: 0))
+        }
+        #expect(throws: BudgetDraftError.amountTooLarge) {
+            try BudgetService(context: env.context).createBudget(
+                makeDraft(env, amount: MoneyAmount.maxAbsoluteMinorUnits + 1)
+            )
         }
     }
 
@@ -121,6 +153,19 @@ struct BudgetServiceTests {
         #expect(throws: BudgetDraftError.self) {
             try service.updateAmount(uuid: budget.uuid, amountMinorUnits: -1)
         }
+    }
+
+    @Test func 更新额度超上限被拒且旧值不变() throws {
+        let env = try makeEnv()
+        let service = BudgetService(context: env.context)
+        let budget = try service.createBudget(makeDraft(env))
+        #expect(throws: BudgetDraftError.amountTooLarge) {
+            try service.updateAmount(
+                uuid: budget.uuid,
+                amountMinorUnits: MoneyAmount.maxAbsoluteMinorUnits + 1
+            )
+        }
+        #expect(budget.amountMinorUnits == 100_000)
     }
 
     @Test func 软删后不可再更新() throws {
@@ -213,9 +258,39 @@ struct BudgetServiceTests {
 
     @Test func 物化无效月份被拒() throws {
         let env = try makeEnv()
-        #expect(throws: BudgetServiceError.self) {
+        #expect(throws: BudgetServiceError.invalidMonth) {
             try BudgetService(context: env.context).materialize(ledgerID: env.ledgerID, year: 2026, month: 13)
         }
+    }
+
+    @Test func 物化拒绝越界年份与归档引用且不插入月度行() throws {
+        let env = try makeEnv()
+        let dining = try makeCategory(env, name: "餐饮")
+        let service = BudgetService(context: env.context)
+        _ = try service.createBudget(makeDraft(env, categoryID: dining.uuid))
+
+        #expect(throws: BudgetServiceError.invalidYear) {
+            try service.materialize(
+                ledgerID: env.ledgerID,
+                year: DraftLimits.budgetYearRange.lowerBound - 1,
+                month: 7
+            )
+        }
+
+        dining.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.categoryArchived) {
+            try service.materialize(ledgerID: env.ledgerID, year: 2026, month: 7)
+        }
+
+        dining.isArchived = false
+        let ledger = try #require(try env.context.fetch(FetchDescriptor<Ledger>()).first)
+        ledger.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.ledgerArchived) {
+            try service.materialize(ledgerID: env.ledgerID, year: 2026, month: 7)
+        }
+        #expect(try budgetCount(env) == 1)
     }
 
     // MARK: - 撤销恢复
@@ -266,6 +341,61 @@ struct BudgetServiceTests {
         #expect(throws: BudgetServiceError.self) {
             try service.undoSoftDeleteBudget(uuid: budget.uuid)
         }
+        #expect(budget.isSoftDeleted)
+    }
+
+    @Test func 归档引用或越界周期阻断恢复() throws {
+        let env = try makeEnv()
+        let dining = try makeCategory(env, name: "餐饮")
+        let service = BudgetService(context: env.context)
+
+        let archivedCategoryBudget = try service.createBudget(
+            makeDraft(env, categoryID: dining.uuid, year: 2026, month: 7)
+        )
+        try service.softDeleteBudget(uuid: archivedCategoryBudget.uuid)
+        dining.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.categoryArchived) {
+            try service.undoSoftDeleteBudget(uuid: archivedCategoryBudget.uuid)
+        }
+        #expect(archivedCategoryBudget.isSoftDeleted)
+
+        dining.isArchived = false
+        archivedCategoryBudget.periodYear = DraftLimits.budgetYearRange.upperBound + 1
+        try env.context.save()
+        #expect(throws: BudgetServiceError.invalidYear) {
+            try service.undoSoftDeleteBudget(uuid: archivedCategoryBudget.uuid)
+        }
+        #expect(archivedCategoryBudget.isSoftDeleted)
+
+        archivedCategoryBudget.periodYear = 2026
+        let ledger = try #require(try env.context.fetch(FetchDescriptor<Ledger>()).first)
+        ledger.isArchived = true
+        try env.context.save()
+        #expect(throws: BudgetServiceError.ledgerArchived) {
+            try service.undoSoftDeleteBudget(uuid: archivedCategoryBudget.uuid)
+        }
+        #expect(archivedCategoryBudget.isSoftDeleted)
+    }
+
+    @Test func 级联恢复跳过归档引用与越界周期() throws {
+        let env = try makeEnv()
+        let dining = try makeCategory(env, name: "餐饮")
+        let service = BudgetService(context: env.context)
+        let budget = try service.createBudget(
+            makeDraft(env, categoryID: dining.uuid, year: 2026, month: 7)
+        )
+        try service.softDeleteBudget(uuid: budget.uuid)
+
+        dining.isArchived = true
+        try env.context.save()
+        try BudgetService.restoreSoftDeletedBudgets([budget], context: env.context)
+        #expect(budget.isSoftDeleted)
+
+        dining.isArchived = false
+        budget.periodMonth = 13
+        try env.context.save()
+        try BudgetService.restoreSoftDeletedBudgets([budget], context: env.context)
         #expect(budget.isSoftDeleted)
     }
 

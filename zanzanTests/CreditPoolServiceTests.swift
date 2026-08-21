@@ -40,6 +40,30 @@ struct CreditPoolServiceTests {
         #expect(throws: CreditPoolDraftError.self) { try zeroLimit.validated() }
     }
 
+    @Test func 名称或备注超长抛错() {
+        var draft = CreditPoolDraft()
+        draft.name = String(repeating: "池", count: DraftLimits.maxNameLength + 1)
+        draft.totalLimitString = "1000"
+        #expect(throws: CreditPoolDraftError.nameTooLong) { try draft.validated() }
+
+        draft.name = "授信池"
+        draft.note = String(repeating: "备", count: DraftLimits.maxNoteLength + 1)
+        #expect(throws: CreditPoolDraftError.noteTooLong) { try draft.validated() }
+    }
+
+    @Test func 币种代码归一化并拒绝非法格式() throws {
+        var draft = CreditPoolDraft()
+        draft.name = "美元授信"
+        draft.totalLimitString = "1000"
+        draft.currencyCode = " usd "
+        #expect(try draft.validated().currencyCode == "USD")
+
+        for code in ["US", "USDX", "US1", ""] {
+            draft.currencyCode = code
+            #expect(throws: CreditPoolDraftError.self) { try draft.validated() }
+        }
+    }
+
     @Test func 更新授信池成功() throws {
         let context = try makeContext()
         let service = CreditPoolService(context: context)
@@ -144,7 +168,7 @@ struct CreditPoolServiceTests {
 
     // MARK: - 软删除
 
-    @Test func 软删池成员卡自动解绑() throws {
+    @Test func 软删池保留成员关系供精确恢复() throws {
         let context = try makeContext()
         let service = CreditPoolService(context: context)
         var draft = CreditPoolDraft()
@@ -159,14 +183,14 @@ struct CreditPoolServiceTests {
 
         try service.softDeletePool(uuid: pool.uuid)
         #expect(pool.isSoftDeleted)
-        #expect(cardA.creditPoolID == nil)
-        #expect(cardB.creditPoolID == nil)
-        #expect(!cardA.isSoftDeleted) // 解绑不动卡本身
+        #expect(cardA.creditPoolID == pool.uuid)
+        #expect(cardB.creditPoolID == pool.uuid)
+        #expect(!cardA.isSoftDeleted)
     }
 
     // MARK: - 撤销恢复
 
-    @Test func 撤销软删仅恢复池本身成员不回绑() throws {
+    @Test func 撤销软删恢复池与原成员关系() throws {
         let context = try makeContext()
         let service = CreditPoolService(context: context)
         var draft = CreditPoolDraft()
@@ -179,7 +203,7 @@ struct CreditPoolServiceTests {
         try service.softDeletePool(uuid: pool.uuid)
         try service.undoSoftDeletePool(uuid: pool.uuid)
         #expect(!pool.isSoftDeleted)
-        #expect(card.creditPoolID == nil) // 解绑无记录可回滚，成员须手动重绑
+        #expect(card.creditPoolID == pool.uuid)
     }
 
     @Test func 双重恢复幂等() throws {

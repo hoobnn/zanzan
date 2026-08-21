@@ -69,8 +69,37 @@ struct TagServiceTests {
     @Test func 不同库同名允许() throws {
         let context = try makeContext()
         try makeTag(context, name: "旅行")
-        let scoped = try makeTag(context, name: "旅行", ledgerID: UUID())
+        let ledger = try LedgerService(context: context).createLedger(LedgerDraft(name: "旅行账本"))
+        let scoped = try makeTag(context, name: "旅行", ledgerID: ledger.uuid)
         #expect(scoped.name == "旅行")
+    }
+
+    @Test func 账本作用域标签拒绝不存在软删或归档账本() throws {
+        let context = try makeContext()
+        let service = TagService(context: context)
+        var draft = TagDraft()
+        draft.name = "旅行"
+        draft.ledgerID = UUID()
+
+        #expect(throws: TagServiceError.ledgerNotFound) {
+            try service.createTag(draft)
+        }
+
+        let ledger = try LedgerService(context: context).createLedger(LedgerDraft(name: "旅行账本"))
+        draft.ledgerID = ledger.uuid
+        ledger.isArchived = true
+        try context.save()
+        #expect(throws: TagServiceError.ledgerArchived) {
+            try service.createTag(draft)
+        }
+
+        ledger.isArchived = false
+        ledger.isSoftDeleted = true
+        try context.save()
+        #expect(throws: TagServiceError.ledgerNotFound) {
+            try service.createTag(draft)
+        }
+        #expect(try context.fetchCount(FetchDescriptor<Tag>()) == 0)
     }
 
     @Test func 软删后同名可再建() throws {
@@ -134,6 +163,31 @@ struct TagServiceTests {
         #expect(!tag.isArchived)
     }
 
+    @Test func 暂停周期规则引用仍阻断归档和软删且标签不变() throws {
+        let context = try makeContext()
+        let tag = try makeTag(context, name: "订阅")
+        let rule = RecurringRule(
+            name: "订阅", frequency: .monthly, startAt: .now, nextRunAt: .now,
+            templateKind: .expense, templateAmountMinorUnits: 100
+        )
+        rule.templateTagIDs = [tag.uuid]
+        rule.isPaused = true
+        context.insert(rule)
+        try context.save()
+        let service = TagService(context: context)
+        let updatedAt = tag.updatedAt
+
+        #expect(throws: TagServiceError.referencedByRecurringRule) {
+            try service.setArchived(uuid: tag.uuid, isArchived: true)
+        }
+        #expect(throws: TagServiceError.referencedByRecurringRule) {
+            try service.softDeleteTag(uuid: tag.uuid)
+        }
+        #expect(!tag.isArchived)
+        #expect(!tag.isSoftDeleted)
+        #expect(tag.updatedAt == updatedAt)
+    }
+
     @Test func 有流水引用的标签仍可直接软删且引用保留() throws {
         let env = try makeEnv()
         let tag = try makeTag(env.context, name: "旅行")
@@ -177,7 +231,9 @@ struct TagServiceTests {
 
     @Test func 跨账本标签不可挂() throws {
         let env = try makeEnv()
-        let tag = try makeTag(env.context, name: "旅行", ledgerID: UUID())
+        let otherLedger = try LedgerService(context: env.context)
+            .createLedger(LedgerDraft(name: "旅行账本"))
+        let tag = try makeTag(env.context, name: "旅行", ledgerID: otherLedger.uuid)
         let tx = try record(env)
         #expect(throws: TagServiceError.ledgerMismatch) {
             try TagService(context: env.context).attachTag(tagUUID: tag.uuid, toTransaction: tx.uuid)
@@ -250,6 +306,21 @@ struct TagServiceTests {
         try service.softDeleteTag(uuid: tag.uuid)
         try makeTag(context, name: "旅行") // 删除期间新建了同名标签
         #expect(throws: TagServiceError.duplicateName) {
+            try service.undoSoftDeleteTag(uuid: tag.uuid)
+        }
+        #expect(tag.isSoftDeleted)
+    }
+
+    @Test func 归属账本不可用时阻断恢复() throws {
+        let context = try makeContext()
+        let ledger = try LedgerService(context: context).createLedger(LedgerDraft(name: "旅行账本"))
+        let service = TagService(context: context)
+        let tag = try makeTag(context, name: "旅行", ledgerID: ledger.uuid)
+        try service.softDeleteTag(uuid: tag.uuid)
+        ledger.isArchived = true
+        try context.save()
+
+        #expect(throws: TagServiceError.ledgerArchived) {
             try service.undoSoftDeleteTag(uuid: tag.uuid)
         }
         #expect(tag.isSoftDeleted)

@@ -6,12 +6,14 @@ struct CategoryDraft {
     var name: String = ""
     var kind: TransactionKind = .expense
     var parentID: UUID? = nil
+    var ledgerID: UUID? = nil
     var iconPrimary: String = ""
 
     struct Validated {
         let name: String
         let kind: TransactionKind
         let parentID: UUID?
+        let ledgerID: UUID?
         let iconPrimary: String
     }
 
@@ -25,6 +27,7 @@ struct CategoryDraft {
             name: name,
             kind: kind,
             parentID: parentID,
+            ledgerID: ledgerID,
             iconPrimary: icon.isEmpty ? "tag" : icon
         )
     }
@@ -37,6 +40,7 @@ extension CategoryDraft {
         name = category.name
         kind = category.kind ?? .expense
         parentID = category.parentID
+        ledgerID = category.ledgerID
         iconPrimary = category.iconPrimary
     }
 }
@@ -48,9 +52,9 @@ enum CategoryDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: String(localized: "分类名不能为空")
-        case .nameTooLong: String(localized: "分类名不能超过 \(DraftLimits.maxNameLength) 字")
-        case .invalidKind: String(localized: "分类方向只能是支出或收入")
+        case .emptyName: ZanzanLocalization.string( "分类名不能为空")
+        case .nameTooLong: ZanzanLocalization.string( "分类名不能超过 \(DraftLimits.maxNameLength) 字")
+        case .invalidKind: ZanzanLocalization.string( "分类方向只能是支出或收入")
         }
     }
 }

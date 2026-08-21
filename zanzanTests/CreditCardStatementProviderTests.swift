@@ -123,6 +123,54 @@ struct CreditCardStatementProviderTests {
         #expect(statement.statementAmountMinorUnits == 0)
     }
 
+    @Test func asOf之后但仍在账期内的未来消费不计账单与可用额度() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let card = makeCreditCard(context: context, statementDay: 15, limit: 100_000)
+        let past = Transaction(
+            kind: .expense,
+            amountMinorUnits: 20_000,
+            occurredAt: date(2026, 7, 20),
+            ledgerID: UUID()
+        )
+        past.account = card
+        let future = Transaction(
+            kind: .expense,
+            amountMinorUnits: 30_000,
+            occurredAt: date(2026, 8, 1),
+            ledgerID: UUID()
+        )
+        future.account = card
+        context.insert(past)
+        context.insert(future)
+        try context.save()
+
+        let statement = try CreditCardStatementProvider(context: context)
+            .statement(for: card, asOf: date(2026, 7, 25), calendar: calendar)
+        #expect(statement.statementAmountMinorUnits == 20_000)
+        #expect(statement.availableCreditMinorUnits == 80_000)
+    }
+
+    @Test func 账单金额聚合溢出抛MoneyArithmeticError而非崩溃() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let card = makeCreditCard(context: context, statementDay: 15)
+        for day in [20, 21] {
+            let expense = Transaction(
+                kind: .expense,
+                amountMinorUnits: Int.max,
+                occurredAt: date(2026, 7, day),
+                ledgerID: UUID()
+            )
+            expense.account = card
+            context.insert(expense)
+        }
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try CreditCardStatementProvider(context: context)
+                .statement(for: card, asOf: self.date(2026, 7, 25), calendar: self.calendar)
+        }
+    }
+
     // MARK: - 可用额度
 
     @Test func 独立卡可用额度等于额度减欠款() throws {

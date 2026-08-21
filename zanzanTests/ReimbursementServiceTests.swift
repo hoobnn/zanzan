@@ -59,12 +59,13 @@ struct ReimbursementServiceTests {
         amount: Int,
         account: Account? = nil,
         ledgerID: UUID? = nil,
+        occurredAt: Date = .now,
         allocations: [(Transaction, Int)]
     ) throws -> Transaction {
         try f.service.recordSettlement(
             kind: kind,
             amountMinorUnits: amount,
-            occurredAt: .now,
+            occurredAt: occurredAt,
             accountUUID: (account ?? f.cash).uuid,
             ledgerID: ledgerID ?? f.ledger.uuid,
             allocations: allocations.map {
@@ -75,6 +76,12 @@ struct ReimbursementServiceTests {
 
     private func activeLinks(_ f: Fixture) throws -> [TransactionLink] {
         try f.context.fetch(FetchDescriptor<TransactionLink>(predicate: #Predicate { !$0.isSoftDeleted }))
+    }
+
+    private func activeSnapshots(_ f: Fixture, accountUUID: UUID) throws -> [BalanceSnapshot] {
+        try f.context.fetch(FetchDescriptor<BalanceSnapshot>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.accountID == accountUUID }
+        ))
     }
 
     // MARK: - 垫付标记
@@ -198,6 +205,36 @@ struct ReimbursementServiceTests {
         #expect(links.first?.settlementTransactionID == settlement.uuid)
         #expect(links.first?.amountMinorUnits == 10_000)
         #expect(links.first?.kind == .reimbursement)
+    }
+
+    @Test func 到账单创建删除恢复均失效账户快照() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let occurredAt = Calendar.current.date(
+            from: DateComponents(year: 2026, month: 1, day: 10)
+        )!
+        let snapshotAt = Calendar.current.date(
+            from: DateComponents(year: 2026, month: 1, day: 31)
+        )!
+        let snapshots = BalanceSnapshotService(context: f.context)
+
+        try snapshots.generateSnapshot(accountUUID: f.cash.uuid, asOf: snapshotAt)
+        let settlement = try settle(
+            f,
+            amount: 10_000,
+            occurredAt: occurredAt,
+            allocations: [(original, 10_000)]
+        )
+        #expect(try activeSnapshots(f, accountUUID: f.cash.uuid).isEmpty)
+
+        try snapshots.generateSnapshot(accountUUID: f.cash.uuid, asOf: snapshotAt)
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+        #expect(try activeSnapshots(f, accountUUID: f.cash.uuid).isEmpty)
+
+        try snapshots.generateSnapshot(accountUUID: f.cash.uuid, asOf: snapshotAt)
+        try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        #expect(try activeSnapshots(f, accountUUID: f.cash.uuid).isEmpty)
     }
 
     @Test func 部分报销保持waiting() throws {
@@ -390,6 +427,95 @@ struct ReimbursementServiceTests {
         #expect(!settlement.isSoftDeleted) // 到账单本身保留（回落为普通收入）
     }
 
+    @Test func 恢复单条关联重建到账标记与原单状态且幂等() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(original, 10_000)])
+        let link = try #require(try activeLinks(f).first)
+        try f.service.removeLink(linkUUID: link.uuid)
+
+        try f.service.restoreLink(linkUUID: link.uuid)
+        #expect(!link.isSoftDeleted)
+        #expect(settlement.settlementKind == .reimbursement)
+        #expect(original.reimbursementStatus == .settled)
+        #expect(try activeLinks(f).map(\.uuid) == [link.uuid])
+
+        let linkUpdatedAt = link.updatedAt
+        let settlementUpdatedAt = settlement.updatedAt
+        try f.service.restoreLink(linkUUID: link.uuid)
+        #expect(link.updatedAt == linkUpdatedAt)
+        #expect(settlement.updatedAt == settlementUpdatedAt)
+        #expect(try activeLinks(f).map(\.uuid) == [link.uuid])
+    }
+
+    @Test func 恢复单条关联导致原单超额时零污染() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let oldSettlement = try settle(f, amount: 6_000, allocations: [(original, 6_000)])
+        let oldLink = try #require(try activeLinks(f).first)
+        try f.service.removeLink(linkUUID: oldLink.uuid)
+        _ = try settle(f, amount: 10_000, allocations: [(original, 10_000)])
+
+        #expect(throws: ReimbursementServiceError.allocationExceedsOriginal) {
+            try f.service.restoreLink(linkUUID: oldLink.uuid)
+        }
+        #expect(oldLink.isSoftDeleted)
+        #expect(oldSettlement.settlementKind == nil)
+        #expect(original.reimbursementStatus == .settled)
+        #expect(try activeLinks(f).count == 1)
+    }
+
+    @Test func 到账单回落普通收入后被编辑为带分类时阻断关联恢复() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(original, 10_000)])
+        let link = try #require(try activeLinks(f).first)
+        try f.service.removeLink(linkUUID: link.uuid)
+
+        let incomeCategory = Category(name: "工资", kind: .income, sortOrder: 0)
+        f.context.insert(incomeCategory)
+        try f.context.save()
+        var draft = TransactionDraft()
+        draft.kind = .income
+        draft.amountString = "100"
+        draft.accountUUID = f.cash.uuid
+        draft.categoryUUID = incomeCategory.uuid
+        try TransactionService(context: f.context).updateTransaction(
+            uuid: settlement.uuid,
+            draft: draft
+        )
+
+        #expect(throws: ReimbursementServiceError.invalidSettlementLink) {
+            try f.service.restoreLink(linkUUID: link.uuid)
+        }
+        #expect(link.isSoftDeleted)
+        #expect(settlement.settlementKind == nil)
+        #expect(settlement.category?.uuid == incomeCategory.uuid)
+        #expect(original.reimbursementStatus == .waiting)
+    }
+
+    @Test func 退款不可解除部分关联留下欠分摊() throws {
+        let f = try makeFixture()
+        let a = try makeExpense(f, amount: 4_000)
+        let b = try makeExpense(f, amount: 6_000)
+        let settlement = try settle(
+            f, kind: .refund, amount: 10_000, allocations: [(a, 4_000), (b, 6_000)]
+        )
+        let link = try #require(
+            try activeLinks(f).first { $0.originalTransactionID == a.uuid }
+        )
+
+        #expect(throws: ReimbursementServiceError.refundAllocationMismatch) {
+            try f.service.removeLink(linkUUID: link.uuid)
+        }
+        #expect(!link.isSoftDeleted)
+        #expect(settlement.settlementKind == .refund)
+        #expect(try activeLinks(f).count == 2)
+    }
+
     // MARK: - 恢复到账单（§4 撤销恢复按相反方向执行）
 
     @Test func 恢复到账单级联恢复并回到settled() throws {
@@ -409,6 +535,34 @@ struct ReimbursementServiceTests {
         #expect(tx.reimbursementStatus == .settled) // waiting → settled 正向重算
     }
 
+    @Test func 恢复到账保存失败时整笔回滚() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(original, 10_000)])
+        let link = try #require(try activeLinks(f).first)
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+
+        let key = CompatibilityWriteGate.key
+        let versionMeta = try #require(
+            try f.context.fetch(FetchDescriptor<AppMeta>(predicate: #Predicate {
+                !$0.isSoftDeleted && $0.key == key
+            })).first
+        )
+        versionMeta.value = "99.0.0"
+        try f.context.save()
+
+        #expect(
+            throws: CompatibilityWriteGateError.requiresNewerApp(required: "99.0.0")
+        ) {
+            try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        }
+        #expect(settlement.isSoftDeleted)
+        #expect(link.isSoftDeleted)
+        #expect(original.reimbursementStatus == .waiting)
+        #expect(try activeLinks(f).isEmpty)
+    }
+
     @Test func 恢复部分报销到账单原单回到waiting() throws {
         let f = try makeFixture()
         let tx = try makeExpense(f, amount: 10_000)
@@ -419,6 +573,65 @@ struct ReimbursementServiceTests {
         try f.service.restoreSettlement(transactionUUID: settlement.uuid)
         #expect(tx.reimbursementStatus == .waiting) // 部分覆盖恢复后仍 waiting
         #expect(try activeLinks(f).count == 1)
+    }
+
+    @Test func 恢复到账不复活此前单独删除的关联() throws {
+        let f = try makeFixture()
+        let a = try makeExpense(f, amount: 4_000)
+        let b = try makeExpense(f, amount: 6_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: a.uuid)
+        try f.service.markAwaitingReimbursement(transactionUUID: b.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(a, 4_000), (b, 6_000)])
+        let manuallyRemoved = try #require(
+            try activeLinks(f).first { $0.originalTransactionID == a.uuid }
+        )
+        try f.service.removeLink(linkUUID: manuallyRemoved.uuid)
+
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+        try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+
+        #expect(manuallyRemoved.isSoftDeleted)
+        #expect(try activeLinks(f).map(\.originalTransactionID) == [b.uuid])
+    }
+
+    @Test func 恢复退款欠分摊被拒且保持软删除() throws {
+        let f = try makeFixture()
+        let a = try makeExpense(f, amount: 4_000)
+        let b = try makeExpense(f, amount: 6_000)
+        let settlement = try settle(
+            f, kind: .refund, amount: 10_000, allocations: [(a, 4_000), (b, 6_000)]
+        )
+        let links = try activeLinks(f)
+        let previouslyRemoved = try #require(
+            links.first { $0.originalTransactionID == a.uuid }
+        )
+        previouslyRemoved.isSoftDeleted = true
+        previouslyRemoved.updatedAt = Date(timeIntervalSince1970: 0)
+        try f.context.save()
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+
+        #expect(throws: ReimbursementServiceError.refundAllocationMismatch) {
+            try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        }
+        #expect(settlement.isSoftDeleted)
+        #expect(links.allSatisfy { $0.isSoftDeleted })
+        #expect(try activeLinks(f).isEmpty)
+    }
+
+    @Test func 恢复前原单缺失则整笔无变更() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try settle(f, amount: 10_000, allocations: [(original, 10_000)])
+        try f.service.removeSettlement(transactionUUID: settlement.uuid)
+        original.isSoftDeleted = true
+        try f.context.save()
+
+        #expect(throws: ReimbursementServiceError.self) {
+            try f.service.restoreSettlement(transactionUUID: settlement.uuid)
+        }
+        #expect(settlement.isSoftDeleted)
+        #expect(try activeLinks(f).isEmpty)
     }
 
     @Test func 恢复致原单超额分摊被阻断() throws {
@@ -444,12 +657,72 @@ struct ReimbursementServiceTests {
         }
     }
 
+    @Test func 坏关联金额聚合溢出时抛错而不崩溃() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        f.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: UUID(),
+            kind: .refund,
+            amountMinorUnits: Int.max
+        ))
+        f.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: UUID(),
+            kind: .refund,
+            amountMinorUnits: 1
+        ))
+        try f.context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try f.service.allocatedAmount(originalID: original.uuid)
+        }
+    }
+
     @Test func 普通流水不可按到账单删除() throws {
         let f = try makeFixture()
         let tx = try makeExpense(f, amount: 10_000)
         #expect(throws: ReimbursementServiceError.self) {
             try f.service.removeSettlement(transactionUUID: tx.uuid)
         }
+    }
+
+    // MARK: - 到账标记重建
+
+    @Test func 到账标记由关联行全量重建并幂等收敛() throws {
+        let f = try makeFixture()
+        let original = try makeExpense(f, amount: 10_000)
+        try f.service.markAwaitingReimbursement(transactionUUID: original.uuid)
+        let settlement = try settle(f, amount: 5_000, allocations: [(original, 5_000)])
+        let ordinaryIncome = Transaction(
+            kind: .income, amountMinorUnits: 1_000, occurredAt: .now, ledgerID: f.ledger.uuid
+        )
+        ordinaryIncome.account = f.cash
+        f.context.insert(ordinaryIncome)
+
+        settlement.settlementKindRawValue = ""
+        ordinaryIncome.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        try f.context.save()
+
+        #expect(try f.service.rebuildSettlementKinds() == 2)
+        #expect(settlement.settlementKind == .reimbursement)
+        #expect(ordinaryIncome.settlementKindRawValue.isEmpty)
+        #expect(try f.service.rebuildSettlementKinds() == 0)
+    }
+
+    @Test func 重建遇到未知到账标记时保持原串并停止写入() throws {
+        let f = try makeFixture()
+        let income = Transaction(
+            kind: .income, amountMinorUnits: 1_000, occurredAt: .now, ledgerID: f.ledger.uuid
+        )
+        income.settlementKindRawValue = "futureSettlement"
+        f.context.insert(income)
+        try f.context.save()
+
+        #expect(throws: ReimbursementServiceError.unsupportedSettlementKind) {
+            _ = try f.service.rebuildSettlementKinds()
+        }
+        #expect(income.settlementKindRawValue == "futureSettlement")
     }
 
     // MARK: - 退款

@@ -44,7 +44,10 @@ enum TransactionCSV {
 
     /// RFC 4180 解析：支持带引号字段、`""` 转义、字段内换行、CRLF/LF 行尾。
     /// 外部数据不可信：引号位置非法/未闭合一律抛错，绝不静默猜测。
-    static func parse(_ text: String) throws -> [[String]] {
+    static func parse(
+        _ text: String,
+        maximumRecordCount: Int? = nil
+    ) throws -> [[String]] {
         var records: [[String]] = []
         var record: [String] = []
         var field = ""
@@ -56,10 +59,13 @@ enum TransactionCSV {
             field = ""
             isAwaitingSeparator = false
         }
-        func endRecord() {
+        func endRecord() throws {
             // 空白行（无任何字段与内容）跳过
             if record.isEmpty && field.isEmpty && !isAwaitingSeparator { return }
             endField()
+            if let maximumRecordCount, records.count >= maximumRecordCount {
+                throw TransactionCSVError.recordLimitExceeded
+            }
             records.append(record)
             record = []
         }
@@ -88,7 +94,7 @@ enum TransactionCSV {
                 case ",":
                     endField()
                 case "\n":
-                    endRecord()
+                    try endRecord()
                 case "\r":
                     break // CRLF 的 \r 忽略，行尾统一由 \n 触发
                 default:
@@ -99,7 +105,7 @@ enum TransactionCSV {
             index = text.index(after: index)
         }
         guard !isInQuotes else { throw TransactionCSVError.malformed } // 引号未闭合
-        endRecord() // 末行无换行符时补收
+        try endRecord() // 末行无换行符时补收
         return records
     }
 
@@ -117,21 +123,29 @@ enum TransactionCSV {
 
 enum TransactionCSVError: LocalizedError {
     case malformed
+    case recordLimitExceeded
 
     var errorDescription: String? {
         switch self {
-        case .malformed: String(localized: "CSV 格式不正确（引号未闭合或位置非法）")
+        case .malformed: ZanzanLocalization.string( "CSV 格式不正确（引号未闭合或位置非法）")
+        case .recordLimitExceeded: nil
         }
     }
 }
 
 /// 流水 CSV 导出（设计文档 §5.12 配套读路径）。列约定见 `TransactionCSV`。
 struct TransactionCSVExporter {
+    struct ExportResult {
+        let csv: String
+        let exportedCount: Int
+        let skippedCount: Int
+    }
+
     let context: ModelContext
 
-    /// 导出指定账本、时间范围（闭区间 [startDate, endDate]）内的活跃流水，按发生时间升序。
-    /// 软删流水不导出；kind 语义未知的流水跳过（§4 前向兼容：未知数据只读不搬运）。
-    func exportCSV(ledgerID: UUID, from startDate: Date, to endDate: Date) throws -> String {
+    func export(
+        ledgerID: UUID, from startDate: Date, to endDate: Date
+    ) throws -> ExportResult {
         let descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate {
                 !$0.isSoftDeleted && $0.ledgerID == ledgerID
@@ -142,9 +156,17 @@ struct TransactionCSVExporter {
         let transactions = try context.fetch(descriptor)
 
         var lines = [TransactionCSV.headerColumns.joined(separator: ",")]
+        var skippedCount = 0
         for tx in transactions {
-            guard let kind = tx.kind, let kindLabel = TransactionCSV.kindLabels[kind] else { continue }
-            // Decimal 描述即十进制串；nil（本位币行/非跨币种转账）导出为空
+            guard let kind = tx.kind,
+                  let kindLabel = TransactionCSV.kindLabels[kind],
+                  tx.settlementKindRawValue.isEmpty,
+                  tx.sourceKind != .adjustment,
+                  tx.account != nil,
+                  (kind == .transfer ? tx.targetAccount != nil : tx.category != nil) else {
+                skippedCount += 1
+                continue
+            }
             let fxRateField: String = tx.fxRateToBase.map { "\($0)" } ?? ""
             let targetAmountField: String = tx.targetAmountMinorUnits
                 .map { MoneyAmount.decimalString(fromMinorUnits: $0) } ?? ""
@@ -163,6 +185,16 @@ struct TransactionCSVExporter {
             ]
             lines.append(fields.map(TransactionCSV.escape).joined(separator: ","))
         }
-        return lines.joined(separator: "\n") + "\n"
+        return ExportResult(
+            csv: lines.joined(separator: "\n") + "\n",
+            exportedCount: lines.count - 1,
+            skippedCount: skippedCount
+        )
+    }
+
+    /// 导出指定账本、时间范围（闭区间 [startDate, endDate]）内的活跃流水，按发生时间升序。
+    /// 兼容旧调用方；需要向用户披露跳过数量时使用 `export`。
+    func exportCSV(ledgerID: UUID, from startDate: Date, to endDate: Date) throws -> String {
+        try export(ledgerID: ledgerID, from: startDate, to: endDate).csv
     }
 }

@@ -135,19 +135,19 @@ enum RecurringRuleDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: String(localized: "请输入计划名称")
-        case .nameTooLong: String(localized: "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
-        case .noteTooLong: String(localized: "备注不能超过 \(DraftLimits.maxNoteLength) 字")
-        case .invalidInterval: String(localized: "重复间隔必须大于等于 1")
-        case .intervalTooLarge: String(localized: "重复间隔不能超过 \(DraftLimits.maxRecurrenceInterval)")
-        case .invalidRecurrenceDays: String(localized: "触发日超出有效范围")
-        case .endBeforeStart: String(localized: "截止时间不能早于开始时间")
-        case .dateOutOfRange: String(localized: "开始/截止时间超出可记账范围")
-        case .invalidAmount: String(localized: "金额须为大于 0 的数字（最多两位小数）")
-        case .missingAccount: String(localized: "请选择账户")
-        case .missingCategory: String(localized: "请选择分类")
-        case .missingTargetAccount: String(localized: "请选择转入账户")
-        case .sameTransferAccounts: String(localized: "转出与转入账户不能相同")
+        case .emptyName: ZanzanLocalization.string( "请输入计划名称")
+        case .nameTooLong: ZanzanLocalization.string( "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
+        case .noteTooLong: ZanzanLocalization.string( "备注不能超过 \(DraftLimits.maxNoteLength) 字")
+        case .invalidInterval: ZanzanLocalization.string( "重复间隔必须大于等于 1")
+        case .intervalTooLarge: ZanzanLocalization.string( "重复间隔不能超过 \(DraftLimits.maxRecurrenceInterval)")
+        case .invalidRecurrenceDays: ZanzanLocalization.string( "触发日超出有效范围")
+        case .endBeforeStart: ZanzanLocalization.string( "截止时间不能早于开始时间")
+        case .dateOutOfRange: ZanzanLocalization.string( "开始/截止时间超出可记账范围")
+        case .invalidAmount: ZanzanLocalization.string( "金额须为大于 0 的数字（最多两位小数）")
+        case .missingAccount: ZanzanLocalization.string( "请选择账户")
+        case .missingCategory: ZanzanLocalization.string( "请选择分类")
+        case .missingTargetAccount: ZanzanLocalization.string( "请选择转入账户")
+        case .sameTransferAccounts: ZanzanLocalization.string( "转出与转入账户不能相同")
         }
     }
 }

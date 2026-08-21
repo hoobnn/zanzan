@@ -10,31 +10,73 @@ struct BalanceSnapshotService {
     /// 同账户同时点已有活跃快照则刷新其值（幂等，不新增行）；软删账户不生成。
     @discardableResult
     func generateSnapshot(accountUUID: UUID, asOf: Date) throws -> BalanceSnapshot {
-        let account = try fetchActiveAccount(accountUUID)
-        let snapshot = try upsertSnapshot(for: account, asOf: asOf)
-        try context.save()
-        return snapshot
+        do {
+            let account = try fetchActiveAccount(accountUUID)
+            let snapshot = try upsertSnapshot(for: account, asOf: asOf)
+            try context.zanzanSave()
+            return snapshot
+        } catch {
+            context.rollback()
+            throw error
+        }
     }
 
     /// 全部未软删账户批量落快照（归档账户余额照常，一并生成）。
     @discardableResult
     func generateSnapshots(asOf: Date) throws -> [BalanceSnapshot] {
-        let accounts = try context.fetch(
-            FetchDescriptor<Account>(predicate: #Predicate { !$0.isSoftDeleted })
-        )
-        let snapshots = try accounts.map { try upsertSnapshot(for: $0, asOf: asOf) }
-        try context.save()
-        return snapshots
+        do {
+            let accounts = try context.fetch(
+                FetchDescriptor<Account>(
+                    predicate: #Predicate { !$0.isSoftDeleted },
+                    sortBy: [SortDescriptor(\.sortOrder)]
+                )
+            )
+            let snapshots = try accounts.map { try upsertSnapshot(for: $0, asOf: asOf) }
+            try context.zanzanSave()
+            return snapshots
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// 软删全部活跃快照并按指定时点一次性重建；任一账户失败则整批回滚。
+    @discardableResult
+    func rebuildAllSnapshots(asOf: Date) throws -> [BalanceSnapshot] {
+        do {
+            let rebuiltAt = Date.now
+            for snapshot in try context.fetch(
+                FetchDescriptor<BalanceSnapshot>(predicate: #Predicate { !$0.isSoftDeleted })
+            ) {
+                snapshot.isSoftDeleted = true
+                snapshot.updatedAt = rebuiltAt
+            }
+            let accounts = try context.fetch(
+                FetchDescriptor<Account>(
+                    predicate: #Predicate { !$0.isSoftDeleted },
+                    sortBy: [SortDescriptor(\.sortOrder)]
+                )
+            )
+            let rebuilt = try accounts.map { try upsertSnapshot(for: $0, asOf: asOf) }
+            try context.zanzanSave()
+            return rebuilt
+        } catch {
+            context.rollback()
+            throw error
+        }
     }
 
     /// 全量重算一致性校验：全量派生余额（真相） vs 最新活跃快照 + 之后流水增量。
     /// 无快照时两条路径恒等，视为一致。
-    func verifyConsistency(accountUUID: UUID) throws -> BalanceConsistencyReport {
+    func verifyConsistency(accountUUID: UUID, asOf: Date = .now) throws -> BalanceConsistencyReport {
         let account = try fetchActiveAccount(accountUUID)
-        let derived = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
+        let derived = try AccountBalanceProvider(context: context)
+            .fullyDerivedBalanceMinorUnits(of: account, asOf: asOf)
 
         var snapshotDescriptor = FetchDescriptor<BalanceSnapshot>(
-            predicate: #Predicate { !$0.isSoftDeleted && $0.accountID == accountUUID },
+            predicate: #Predicate {
+                !$0.isSoftDeleted && $0.accountID == accountUUID && $0.snapshotAt <= asOf
+            },
             sortBy: [SortDescriptor(\.snapshotAt, order: .reverse)]
         )
         snapshotDescriptor.fetchLimit = 1
@@ -42,7 +84,8 @@ struct BalanceSnapshotService {
             return BalanceConsistencyReport(
                 derivedBalanceMinorUnits: derived,
                 snapshotBalanceMinorUnits: derived,
-                latestSnapshotAt: nil
+                latestSnapshotAt: nil,
+                deviationMinorUnits: 0
             )
         }
 
@@ -51,16 +94,18 @@ struct BalanceSnapshotService {
         let laterTransactions = try context.fetch(
             FetchDescriptor<Transaction>(predicate: #Predicate {
                 !$0.isSoftDeleted && $0.occurredAt > snapshotAt
+                    && $0.occurredAt <= asOf
                     && ($0.account?.uuid == uuid || $0.targetAccount?.uuid == uuid)
             })
         )
-        let incremental = laterTransactions.reduce(latest.balanceMinorUnits) {
-            $0 + $1.balanceDeltaMinorUnits(for: uuid)
+        let incremental = try laterTransactions.reduce(latest.balanceMinorUnits) {
+            try MoneyArithmetic.add($0, $1.checkedBalanceDeltaMinorUnits(for: uuid))
         }
         return BalanceConsistencyReport(
             derivedBalanceMinorUnits: derived,
             snapshotBalanceMinorUnits: incremental,
-            latestSnapshotAt: snapshotAt
+            latestSnapshotAt: snapshotAt,
+            deviationMinorUnits: try MoneyArithmetic.subtract(incremental, derived)
         )
     }
 
@@ -86,7 +131,8 @@ struct BalanceSnapshotService {
 
     /// 落/刷新一笔快照（不 save，由公开入口统一提交）。
     private func upsertSnapshot(for account: Account, asOf: Date) throws -> BalanceSnapshot {
-        let balance = try balanceMinorUnits(of: account, asOf: asOf)
+        let balance = try AccountBalanceProvider(context: context)
+            .fullyDerivedBalanceMinorUnits(of: account, asOf: asOf)
         let fxRate = try fxRateToBase(for: account, asOf: asOf)
 
         let uuid = account.uuid
@@ -105,22 +151,6 @@ struct BalanceSnapshotService {
         snapshot.fxRateToBase = fxRate
         context.insert(snapshot)
         return snapshot
-    }
-
-    /// asOf 时点派生余额：期初 + occurredAt ≤ asOf 的活跃流水增量。
-    /// 口径与 AccountBalanceProvider 完全一致，仅多时点截断（Provider 无 asOf 参数，归属另一切片）。
-    private func balanceMinorUnits(of account: Account, asOf: Date) throws -> Int {
-        let uuid = account.uuid
-        let descriptor = FetchDescriptor<Transaction>(
-            predicate: #Predicate {
-                !$0.isSoftDeleted && $0.occurredAt <= asOf
-                    && ($0.account?.uuid == uuid || $0.targetAccount?.uuid == uuid)
-            }
-        )
-        let transactions = try context.fetch(descriptor)
-        return transactions.reduce(account.initialBalanceMinorUnits) {
-            $0 + $1.balanceDeltaMinorUnits(for: uuid)
-        }
     }
 
     /// 快照时点汇率（设计文档 5.13）：取该币种 asOf 前最近一笔流水的汇率快照；CNY 账户恒 nil。
@@ -159,7 +189,7 @@ struct BalanceConsistencyReport {
     let latestSnapshotAt: Date?
 
     /// 偏差 = 快照路径 − 全量派生（分）
-    var deviationMinorUnits: Int { snapshotBalanceMinorUnits - derivedBalanceMinorUnits }
+    let deviationMinorUnits: Int
     var isConsistent: Bool { deviationMinorUnits == 0 }
 }
 
@@ -168,7 +198,7 @@ enum BalanceSnapshotServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accountNotFound: String(localized: "账户不存在或已删除")
+        case .accountNotFound: ZanzanLocalization.string( "账户不存在或已删除")
         }
     }
 }

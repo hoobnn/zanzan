@@ -92,14 +92,14 @@ struct InstallmentPlanProviderTests {
                 planUUID: plan.uuid, periodIndex: index, fromAccountID: f.cash.uuid, at: date(2026, 8, 10 + index)
             )
         }
-        try service.undoSettlePeriod(planUUID: plan.uuid, periodIndex: 1, at: date(2026, 8, 13))
+        try service.undoSettlePeriod(planUUID: plan.uuid, periodIndex: 2, at: date(2026, 8, 13))
         let progress = try InstallmentPlanProvider(context: f.context).progress(planUUID: plan.uuid)
 
         #expect(progress.settledPeriodCount == 1)
-        #expect(progress.paidPrincipalMinorUnits == 3_333)      // 仅第 2 期
-        #expect(progress.remainingPrincipalMinorUnits == 6_667) // 第 1 期回到待还
+        #expect(progress.paidPrincipalMinorUnits == 3_333)      // 仅第 1 期
+        #expect(progress.remainingPrincipalMinorUnits == 6_667) // 第 2 期回到待还
         #expect(progress.paidPrincipalMinorUnits + progress.remainingPrincipalMinorUnits == 10_000)
-        #expect(progress.nextDuePeriod?.periodIndex == 1) // 回退后最早待还期
+        #expect(progress.nextDuePeriod?.periodIndex == 2) // 回退后最早待还期
     }
 
     @Test func 提前结清后剩余归零且闭环仍成立() throws {
@@ -154,6 +154,29 @@ struct InstallmentPlanProviderTests {
         try InstallmentService(context: f.context).softDeletePlan(uuid: plan.uuid, at: date(2026, 8, 15))
         #expect(throws: InstallmentPlanProviderError.planNotFound) {
             _ = try provider.progress(planUUID: plan.uuid)
+        }
+    }
+
+    @Test func 历史坏数据聚合溢出时明确失败() throws {
+        let f = try makeFixture()
+        let plan = InstallmentPlan(
+            name: "异常计划", kind: .purchase, accountID: f.card.uuid,
+            ledgerID: f.ledger.uuid, principalMinorUnits: 1, totalPeriods: 2,
+            amortizationKind: .flatFee, firstDueAt: date(2026, 8, 10)
+        )
+        f.context.insert(plan)
+        for index in 1...2 {
+            let period = InstallmentPeriod(
+                planID: plan.uuid, periodIndex: index, dueAt: date(2026, 8, 9 + index),
+                principalMinorUnits: Int.max, interestMinorUnits: 0
+            )
+            period.statusRawValue = InstallmentPeriodStatus.settled.rawValue
+            f.context.insert(period)
+        }
+        try f.context.save()
+
+        #expect(throws: MoneyArithmeticError.overflow) {
+            _ = try InstallmentPlanProvider(context: f.context).progress(planUUID: plan.uuid)
         }
     }
 }

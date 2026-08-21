@@ -35,6 +35,58 @@ struct LedgerServiceTests {
         #expect(second.isDefault)
     }
 
+    @Test func 归档账本不能设为默认() throws {
+        let context = try makeContext()
+        let commands = LedgerService(context: context)
+        let first = try commands.createLedger(LedgerDraft(name: "日常"))
+        let archived = try commands.createLedger(LedgerDraft(name: "归档"))
+        archived.isArchived = true
+        try context.save()
+
+        #expect(throws: LedgerServiceError.ledgerArchived) {
+            try commands.setDefaultLedger(uuid: archived.uuid)
+        }
+        #expect(first.isDefault)
+        #expect(!archived.isDefault)
+    }
+
+    @Test func 归档与取消归档闭环且默认账本受保护() throws {
+        let context = try makeContext()
+        let commands = LedgerService(context: context)
+        let first = try commands.createLedger(LedgerDraft(name: "日常"))
+        let second = try commands.createLedger(LedgerDraft(name: "旅行"))
+
+        #expect(throws: LedgerServiceError.cannotArchiveDefault) {
+            try commands.setArchived(uuid: first.uuid, isArchived: true)
+        }
+        try commands.setArchived(uuid: second.uuid, isArchived: true)
+        #expect(second.isArchived)
+        try commands.setArchived(uuid: second.uuid, isArchived: false)
+        #expect(!second.isArchived)
+    }
+
+    @Test func 暂停周期规则引用仍阻断归档且账本不变() throws {
+        let context = try makeContext()
+        let commands = LedgerService(context: context)
+        _ = try commands.createLedger(LedgerDraft(name: "日常"))
+        let target = try commands.createLedger(LedgerDraft(name: "旅行"))
+        let rule = RecurringRule(
+            name: "房租", frequency: .monthly, startAt: .now, nextRunAt: .now,
+            templateKind: .expense, templateAmountMinorUnits: 100
+        )
+        rule.templateLedgerID = target.uuid
+        rule.isPaused = true
+        context.insert(rule)
+        try context.save()
+        let updatedAt = target.updatedAt
+
+        #expect(throws: LedgerServiceError.referencedByRecurringRule) {
+            try commands.setArchived(uuid: target.uuid, isArchived: true)
+        }
+        #expect(!target.isArchived)
+        #expect(target.updatedAt == updatedAt)
+    }
+
     @Test func 默认账本禁删() throws {
         let context = try makeContext()
         let commands = LedgerService(context: context)
@@ -57,17 +109,32 @@ struct LedgerServiceTests {
         }
     }
 
-    @Test func 删除级联软删预算() throws {
+    @Test func 删除级联软删预算与专属分类标签且撤销精确恢复() throws {
         let context = try makeContext()
         let commands = LedgerService(context: context)
         _ = try commands.createLedger(LedgerDraft(name: "日常"))
         let target = try commands.createLedger(LedgerDraft(name: "旅行"))
         let budget = Budget(ledgerID: target.uuid, amountMinorUnits: 100_000)
+        let category = Category(name: "旅行餐饮", kind: .expense, sortOrder: 0)
+        category.ledgerID = target.uuid
+        budget.categoryID = category.uuid
+        let tag = Tag(name: "出差")
+        tag.ledgerID = target.uuid
         context.insert(budget)
+        context.insert(category)
+        context.insert(tag)
         try context.save()
         try commands.softDeleteLedger(uuid: target.uuid)
         #expect(target.isSoftDeleted)
         #expect(budget.isSoftDeleted)
+        #expect(category.isSoftDeleted)
+        #expect(tag.isSoftDeleted)
+
+        try commands.undoSoftDeleteLedger(uuid: target.uuid)
+        #expect(!target.isSoftDeleted)
+        #expect(!budget.isSoftDeleted)
+        #expect(!category.isSoftDeleted)
+        #expect(!tag.isSoftDeleted)
     }
 
     @Test func 有活跃周期规则引用阻断删除() throws {

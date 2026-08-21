@@ -66,10 +66,11 @@ struct MoneyFormatterTests {
         #expect(MoneyAmount.decimalString(fromMinorUnits: -350) == "-3.5")
     }
 
-    @Test func 展示格式化锁定zhCN人民币() {
-        #expect(formatAmount(1234) == "¥12.34")
-        #expect(formatAmount(-1234) == "-¥12.34")
-        #expect(formatAmount(1234, withSign: true) == "+¥12.34")
-        #expect(formatAmount(0) == "¥0.00")
+    @Test func 展示格式化跟随应用语言() {
+        #expect(formatAmount(1234, language: .simplifiedChinese) == "¥12.34")
+        #expect(formatAmount(-1234, language: .simplifiedChinese) == "-¥12.34")
+        #expect(formatAmount(1234, withSign: true, language: .simplifiedChinese) == "+¥12.34")
+        #expect(formatAmount(0, language: .simplifiedChinese) == "¥0.00")
+        #expect(formatAmount(1234, language: .english) == "CN¥12.34")
     }
 }

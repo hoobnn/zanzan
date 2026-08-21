@@ -37,4 +37,87 @@ struct AccountBalanceProviderTests {
         #expect(cashBalance == 11_850)
         #expect(cardBalance == 2_000)
     }
+
+    @Test func asOf之后的未来流水不计入时点余额() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let account = Account(name: "现金", kind: .fund)
+        account.initialBalanceMinorUnits = 10_000
+        context.insert(account)
+        let asOf = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let past = Transaction(
+            kind: .expense,
+            amountMinorUnits: 1_000,
+            occurredAt: asOf.addingTimeInterval(-60),
+            ledgerID: UUID()
+        )
+        past.account = account
+        let future = Transaction(
+            kind: .income,
+            amountMinorUnits: 5_000,
+            occurredAt: asOf.addingTimeInterval(60),
+            ledgerID: UUID()
+        )
+        future.account = account
+        context.insert(past)
+        context.insert(future)
+        try context.save()
+
+        let provider = AccountBalanceProvider(context: context)
+        #expect(try provider.balanceMinorUnits(of: account, asOf: asOf) == 9_000)
+        #expect(try provider.balanceMinorUnits(of: account, asOf: future.occurredAt) == 14_000)
+    }
+
+    @Test func 有快照时使用最新快照加后续流水() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let account = Account(name: "现金", kind: .fund)
+        account.initialBalanceMinorUnits = 10_000
+        context.insert(account)
+        let snapshotAt = Date(timeIntervalSince1970: 1_800_000_000)
+        context.insert(BalanceSnapshot(
+            accountID: account.uuid,
+            snapshotAt: snapshotAt,
+            balanceMinorUnits: 9_000
+        ))
+        let later = Transaction(
+            kind: .income,
+            amountMinorUnits: 2_000,
+            occurredAt: snapshotAt.addingTimeInterval(60),
+            ledgerID: UUID()
+        )
+        later.account = account
+        context.insert(later)
+        try context.save()
+
+        let provider = AccountBalanceProvider(context: context)
+        #expect(
+            try provider.balanceMinorUnits(of: account, asOf: later.occurredAt)
+                == 11_000
+        )
+        #expect(
+            try provider.fullyDerivedBalanceMinorUnits(of: account, asOf: later.occurredAt)
+                == 12_000
+        )
+    }
+
+    @Test func 余额聚合溢出抛MoneyArithmeticError而非崩溃() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let account = Account(name: "极值账户", kind: .fund)
+        account.initialBalanceMinorUnits = Int.max
+        context.insert(account)
+        let income = Transaction(
+            kind: .income,
+            amountMinorUnits: 1,
+            occurredAt: Date(timeIntervalSince1970: 1_800_000_000),
+            ledgerID: UUID()
+        )
+        income.account = account
+        context.insert(income)
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try AccountBalanceProvider(context: context)
+                .balanceMinorUnits(of: account, asOf: income.occurredAt)
+        }
+    }
 }

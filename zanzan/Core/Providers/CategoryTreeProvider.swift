@@ -12,11 +12,20 @@ struct CategoryTreeProvider {
     let context: ModelContext
 
     /// includeArchived=true → 管理列表；false → 记账可选树（归档连带剔除）。
-    func tree(kind: TransactionKind, includeArchived: Bool) throws -> [CategoryTreeNode] {
+    func tree(
+        kind: TransactionKind,
+        ledgerID: UUID? = nil,
+        includeArchived: Bool
+    ) throws -> [CategoryTreeNode] {
         let kindRaw = kind.rawValue
+        let scopeLedgerID = ledgerID
         let categories = try context.fetch(
             FetchDescriptor<Category>(
-                predicate: #Predicate { !$0.isSoftDeleted && $0.kindRawValue == kindRaw },
+                predicate: #Predicate {
+                    !$0.isSoftDeleted
+                        && $0.kindRawValue == kindRaw
+                        && $0.ledgerID == scopeLedgerID
+                },
                 sortBy: [SortDescriptor(\.sortOrder)]
             )
         )

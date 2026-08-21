@@ -12,8 +12,18 @@ struct CreditPoolProviderTests {
         return card
     }
 
-    private func addExpense(context: ModelContext, account: Account, amount: Int) {
-        let tx = Transaction(kind: .expense, amountMinorUnits: amount, occurredAt: .now, ledgerID: UUID())
+    private func addExpense(
+        context: ModelContext,
+        account: Account,
+        amount: Int,
+        occurredAt: Date = .now
+    ) {
+        let tx = Transaction(
+            kind: .expense,
+            amountMinorUnits: amount,
+            occurredAt: occurredAt,
+            ledgerID: UUID()
+        )
         tx.account = account
         context.insert(tx)
     }
@@ -61,6 +71,47 @@ struct CreditPoolProviderTests {
         let overview = try CreditPoolProvider(context: context).overview(poolUUID: pool.uuid)
         #expect(overview.usedMinorUnits == 15_000)
         #expect(overview.availableMinorUnits == 0)
+    }
+
+    @Test func asOf之后的未来消费不占用授信池额度() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let pool = CreditPool(name: "招商银行", totalLimitMinorUnits: 100_000)
+        context.insert(pool)
+        let card = makeMemberCard(context: context, pool: pool, name: "卡A")
+        let asOf = Date(timeIntervalSince1970: 1_800_000_000)
+        addExpense(
+            context: context,
+            account: card,
+            amount: 20_000,
+            occurredAt: asOf.addingTimeInterval(-60)
+        )
+        addExpense(
+            context: context,
+            account: card,
+            amount: 30_000,
+            occurredAt: asOf.addingTimeInterval(60)
+        )
+        try context.save()
+
+        let overview = try CreditPoolProvider(context: context)
+            .overview(poolUUID: pool.uuid, asOf: asOf)
+        #expect(overview.usedMinorUnits == 20_000)
+        #expect(overview.availableMinorUnits == 80_000)
+    }
+
+    @Test func 池成员欠款聚合溢出抛MoneyArithmeticError而非崩溃() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let pool = CreditPool(name: "极值池", totalLimitMinorUnits: Int.max)
+        context.insert(pool)
+        let first = makeMemberCard(context: context, pool: pool, name: "卡A")
+        first.initialBalanceMinorUnits = -Int.max
+        let second = makeMemberCard(context: context, pool: pool, name: "卡B")
+        second.initialBalanceMinorUnits = -Int.max
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try CreditPoolProvider(context: context).overview(poolUUID: pool.uuid)
+        }
     }
 
     @Test func 软删成员卡不计入池已用() throws {

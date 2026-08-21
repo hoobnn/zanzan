@@ -92,6 +92,74 @@ struct AttachmentStoreTests {
         #expect(try f.store.load(fileName) == Data("票据".utf8))
     }
 
+    @Test func 单个附件超过完整备份上限时零写入() throws {
+        let f = try makeFixture()
+        defer { f.tearDown() }
+        let oversized = Data(count: AttachmentStore.maximumAttachmentByteCount + 1)
+
+        #expect(throws: AttachmentStoreError.backupCapacityExceeded) {
+            _ = try f.store.save(data: oversized, for: f.transaction.uuid)
+        }
+
+        #expect(f.transaction.attachmentFileNames.isEmpty)
+        if FileManager.default.fileExists(atPath: f.tempDirectory.path) {
+            #expect(
+                try FileManager.default.contentsOfDirectory(
+                    at: f.tempDirectory,
+                    includingPropertiesForKeys: nil
+                ).isEmpty
+            )
+        }
+    }
+
+    @Test func 既有附件达到总容量上限后新增失败且原文件不变() throws {
+        let f = try makeFixture()
+        defer { f.tearDown() }
+        try FileManager.default.createDirectory(
+            at: f.tempDirectory,
+            withIntermediateDirectories: true
+        )
+        let fileNames = [UUID().uuidString, UUID().uuidString]
+        for fileName in fileNames {
+            let url = f.tempDirectory.appending(path: fileName)
+            #expect(FileManager.default.createFile(atPath: url.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(AttachmentStore.maximumAttachmentByteCount))
+            try handle.close()
+        }
+        f.transaction.attachmentFileNames = fileNames
+        try f.context.save()
+
+        #expect(throws: AttachmentStoreError.backupCapacityExceeded) {
+            _ = try f.store.save(data: Data([0x01]), for: f.transaction.uuid)
+        }
+
+        #expect(f.transaction.attachmentFileNames == fileNames)
+        #expect(
+            try FileManager.default.contentsOfDirectory(
+                at: f.tempDirectory,
+                includingPropertiesForKeys: nil
+            ).map(\.lastPathComponent).sorted() == fileNames.sorted()
+        )
+    }
+
+    @Test func 既有附件达到数量上限后新增失败且不访问缺失文件() throws {
+        let f = try makeFixture()
+        defer { f.tearDown() }
+        let fileNames = (0..<AttachmentStore.maximumAttachmentCount).map { _ in
+            UUID().uuidString
+        }
+        f.transaction.attachmentFileNames = fileNames
+        try f.context.save()
+
+        #expect(throws: AttachmentStoreError.backupCapacityExceeded) {
+            _ = try f.store.save(data: Data([0x01]), for: f.transaction.uuid)
+        }
+
+        #expect(f.transaction.attachmentFileNames == fileNames)
+        #expect(!FileManager.default.fileExists(atPath: f.tempDirectory.path))
+    }
+
     @Test func 孤儿清理保留活跃与软删引用() throws {
         let f = try makeFixture()
         defer { f.tearDown() }

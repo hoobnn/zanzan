@@ -113,6 +113,57 @@ struct RecurringRuleServiceTests {
         #expect(throws: RecurringRuleServiceError.self) { try f.service.createRule(draft) }
     }
 
+    @Test func 创建更新恢复均拒绝不可记账的模板引用() throws {
+        let f = try makeFixture()
+        var childDraft = CategoryDraft()
+        childDraft.name = "早餐"
+        childDraft.kind = .expense
+        childDraft.parentID = f.dining.uuid
+        let child = try CategoryService(context: f.context).createCategory(childDraft)
+        var draft = makeDraft(f, startAt: date(2026, 7, 5))
+        draft.templateCategoryID = child.uuid
+
+        f.ledger.isArchived = true
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.ledgerArchived) {
+            try f.service.createRule(draft)
+        }
+
+        f.ledger.isArchived = false
+        child.isArchived = true
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.categoryArchived) {
+            try f.service.createRule(draft)
+        }
+
+        child.isArchived = false
+        try f.context.save()
+        let rule = try f.service.createRule(draft)
+
+        f.cash.isArchived = true
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.accountArchived) {
+            try f.service.updateRule(uuid: rule.uuid, draft: draft, asOf: self.date(2026, 7, 6))
+        }
+
+        f.cash.isArchived = false
+        f.cash.isSelectableForRecord = false
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.accountNotSelectable) {
+            try f.service.updateRule(uuid: rule.uuid, draft: draft, asOf: self.date(2026, 7, 6))
+        }
+
+        f.cash.isSelectableForRecord = true
+        try f.context.save()
+        try f.service.softDeleteRule(uuid: rule.uuid)
+        f.dining.isArchived = true
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.categoryArchived) {
+            try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: self.date(2026, 9, 1))
+        }
+        #expect(rule.isSoftDeleted)
+    }
+
     @Test func 创建时截止前无触发日被拒() throws {
         let f = try makeFixture()
         let draft = makeDraft(f, startAt: date(2026, 7, 1), days: [5], endAt: date(2026, 7, 3))
@@ -190,6 +241,28 @@ struct RecurringRuleServiceTests {
         #expect(rule.nextRunAt == date(2026, 8, 5))
     }
 
+    @Test func 单次最多补记100期且剩余期次可见可续跑() throws {
+        let f = try makeFixture()
+        let rule = try f.service.createRule(
+            makeDraft(f, startAt: date(2026, 1, 1), frequency: .daily)
+        )
+
+        let first = try f.service.materializeDue(asOf: date(2026, 4, 12))
+
+        #expect(first.created.count == 100)
+        let deferred = try #require(first.skippedRules.first)
+        #expect(first.skippedRules.count == 1)
+        #expect(deferred.ruleUUID == rule.uuid)
+        #expect(!deferred.message.isEmpty)
+        #expect(rule.nextRunAt == date(2026, 4, 11))
+
+        let second = try f.service.materializeDue(asOf: date(2026, 4, 12))
+        #expect(second.created.map(\.occurredAt) == [date(2026, 4, 11), date(2026, 4, 12)])
+        #expect(second.skippedRules.isEmpty)
+        #expect(rule.nextRunAt == date(2026, 4, 13))
+        #expect(try transactionCount(f) == 102)
+    }
+
     @Test func 转账规则生成转账流水() throws {
         let f = try makeFixture()
         var draft = makeDraft(f, startAt: date(2026, 7, 5))
@@ -233,6 +306,60 @@ struct RecurringRuleServiceTests {
         #expect(replay.isEmpty) // (sourceID, occurredAt) 去重兜底
         #expect(try transactionCount(f) == 1)
         #expect(rule.nextRunAt == date(2026, 8, 5)) // 仍正常推进
+    }
+
+    @Test func 崩溃重放会补齐已落库流水缺失的模板标签() throws {
+        let f = try makeFixture()
+        var draft = makeDraft(f, startAt: date(2026, 7, 5))
+        draft.templateTagIDs = [f.tag.uuid]
+        let rule = try f.service.createRule(draft)
+        let tx = try #require(f.service.materializeDue(asOf: date(2026, 7, 10)).created.first)
+
+        // 模拟流水已保存、标签和 nextRunAt 尚未提交的崩溃现场。
+        tx.tags = nil
+        rule.nextRunAt = date(2026, 7, 5)
+        try f.context.save()
+
+        let replay = try f.service.materializeDue(asOf: date(2026, 7, 10)).created
+        #expect(replay.isEmpty)
+        #expect(tx.tags?.map(\.uuid) == [f.tag.uuid])
+        #expect(try transactionCount(f) == 1)
+    }
+
+    @Test func 物化拒绝已归档或跨账本的模板标签() throws {
+        let f = try makeFixture()
+        var scopedTagDraft = TagDraft()
+        scopedTagDraft.name = "本账本标签"
+        scopedTagDraft.ledgerID = f.ledger.uuid
+        let scopedTag = try TagService(context: f.context).createTag(scopedTagDraft)
+
+        var archivedDraft = makeDraft(f, startAt: date(2026, 7, 5))
+        archivedDraft.name = "归档标签计划"
+        archivedDraft.templateTagIDs = [f.tag.uuid]
+        let archivedRule = try f.service.createRule(archivedDraft)
+
+        var crossLedgerDraft = makeDraft(f, startAt: date(2026, 7, 5))
+        crossLedgerDraft.name = "跨账本标签计划"
+        crossLedgerDraft.templateTagIDs = [scopedTag.uuid]
+        let crossLedgerRule = try f.service.createRule(crossLedgerDraft)
+
+        let otherLedger = try LedgerService(context: f.context)
+            .createLedger(LedgerDraft(name: "其他账本"))
+        f.tag.isArchived = true
+        scopedTag.ledgerID = otherLedger.uuid
+        try f.context.save()
+
+        let outcome = try f.service.materializeDue(asOf: date(2026, 7, 5))
+        let skippedByRule = Dictionary(
+            uniqueKeysWithValues: outcome.skippedRules.map { ($0.ruleUUID, $0.message) }
+        )
+
+        #expect(outcome.created.isEmpty)
+        #expect(Set(skippedByRule.keys) == Set([archivedRule.uuid, crossLedgerRule.uuid]))
+        #expect(skippedByRule.values.allSatisfy { !$0.isEmpty })
+        #expect(archivedRule.nextRunAt == date(2026, 7, 5))
+        #expect(crossLedgerRule.nextRunAt == date(2026, 7, 5))
+        #expect(try transactionCount(f) == 0)
     }
 
     @Test func 软删产出后补记不复活() throws {
@@ -374,6 +501,29 @@ struct RecurringRuleServiceTests {
         #expect(badRule.nextRunAt == badNextRunAt) // 保持重试语义
     }
 
+    @Test func 未知语义规则只读且物化明确披露() throws {
+        let f = try makeFixture()
+        let draft = makeDraft(f, startAt: date(2026, 7, 5))
+        let rule = try f.service.createRule(draft)
+        rule.frequencyRawValue = "futureFrequency"
+        try f.context.save()
+
+        let outcome = try f.service.materializeDue(asOf: date(2026, 7, 10))
+        #expect(outcome.created.isEmpty)
+        #expect(outcome.skippedRules.map(\.ruleUUID) == [rule.uuid])
+        #expect(throws: RecurringRuleServiceError.unsupportedRule) {
+            try f.service.pauseRule(uuid: rule.uuid)
+        }
+        #expect(throws: RecurringRuleServiceError.unsupportedRule) {
+            try f.service.updateRule(
+                uuid: rule.uuid,
+                draft: draft,
+                asOf: self.date(2026, 7, 6)
+            )
+        }
+        #expect(rule.frequencyRawValue == "futureFrequency")
+    }
+
     @Test func 过期规则空转不回写不产生脏写() throws {
         let f = try makeFixture()
         let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 5, 5), endAt: date(2026, 5, 31)))
@@ -404,12 +554,22 @@ struct RecurringRuleServiceTests {
 
     @Test func 引用账户已删阻断恢复() throws {
         let f = try makeFixture()
-        let rule = try f.service.createRule(makeDraft(f, startAt: date(2026, 7, 1), days: [5]))
+        var draft = makeDraft(f, startAt: date(2026, 7, 1), days: [5])
+        draft.templateTagIDs = [f.tag.uuid]
+        let rule = try f.service.createRule(draft)
         try f.service.softDeleteRule(uuid: rule.uuid)
         // 规则已软删不再算活跃引用，账户可删；随后恢复规则应被引用校验阻断
         try AccountService(context: f.context).softDeleteAccount(uuid: f.cash.uuid)
         #expect(throws: RecurringRuleServiceError.accountNotFound) {
             try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: date(2026, 9, 1))
+        }
+        #expect(rule.isSoftDeleted)
+
+        f.cash.isSoftDeleted = false
+        f.tag.isArchived = true
+        try f.context.save()
+        #expect(throws: RecurringRuleServiceError.tagArchived) {
+            try f.service.undoSoftDeleteRule(uuid: rule.uuid, asOf: self.date(2026, 9, 1))
         }
         #expect(rule.isSoftDeleted)
     }

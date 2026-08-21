@@ -22,6 +22,9 @@ struct BudgetDraft {
 
     func validated() throws -> Validated {
         guard amountMinorUnits > 0 else { throw BudgetDraftError.nonPositiveAmount }
+        guard amountMinorUnits <= MoneyAmount.maxAbsoluteMinorUnits else {
+            throw BudgetDraftError.amountTooLarge
+        }
         guard (periodYear == nil) == (periodMonth == nil) else { throw BudgetDraftError.periodMismatch }
         if let periodYear {
             guard DraftLimits.budgetYearRange.contains(periodYear) else { throw BudgetDraftError.invalidYear }
@@ -41,16 +44,18 @@ struct BudgetDraft {
 
 enum BudgetDraftError: LocalizedError {
     case nonPositiveAmount
+    case amountTooLarge
     case periodMismatch
     case invalidYear
     case invalidMonth
 
     var errorDescription: String? {
         switch self {
-        case .nonPositiveAmount: String(localized: "预算金额必须大于零")
-        case .periodMismatch: String(localized: "预算年份与月份必须同时填写或同时留空")
-        case .invalidYear: String(localized: "预算年份必须在 \(DraftLimits.budgetYearRange.lowerBound) 到 \(DraftLimits.budgetYearRange.upperBound) 之间")
-        case .invalidMonth: String(localized: "预算月份必须在 1 到 12 之间")
+        case .nonPositiveAmount: ZanzanLocalization.string( "预算金额必须大于零")
+        case .amountTooLarge: ZanzanLocalization.string( "预算金额超出可支持范围")
+        case .periodMismatch: ZanzanLocalization.string( "预算年份与月份必须同时填写或同时留空")
+        case .invalidYear: ZanzanLocalization.string( "预算年份必须在 \(DraftLimits.budgetYearRange.lowerBound) 到 \(DraftLimits.budgetYearRange.upperBound) 之间")
+        case .invalidMonth: ZanzanLocalization.string( "预算月份必须在 1 到 12 之间")
         }
     }
 }

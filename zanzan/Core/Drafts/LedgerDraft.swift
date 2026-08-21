@@ -21,8 +21,8 @@ enum LedgerDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: String(localized: "账本名不能为空")
-        case .nameTooLong: String(localized: "账本名不能超过 \(DraftLimits.maxNameLength) 字")
+        case .emptyName: ZanzanLocalization.string( "账本名不能为空")
+        case .nameTooLong: ZanzanLocalization.string( "账本名不能超过 \(DraftLimits.maxNameLength) 字")
         }
     }
 }

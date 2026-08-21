@@ -33,6 +33,24 @@ struct CategoryTreeProviderTests {
         #expect(tree[1].children.isEmpty)
     }
 
+    @Test func 分类树按全局与账本范围隔离() throws {
+        let context = try makeContext()
+        _ = try makeCategory(context, name: "全局")
+        let ledger = try LedgerService(context: context)
+            .createLedger(LedgerDraft(name: "旅行"))
+        var scopedDraft = CategoryDraft()
+        scopedDraft.name = "旅行专属"
+        scopedDraft.ledgerID = ledger.uuid
+        _ = try CategoryService(context: context).createCategory(scopedDraft)
+
+        let global = try CategoryTreeProvider(context: context)
+            .tree(kind: .expense, includeArchived: true)
+        let scoped = try CategoryTreeProvider(context: context)
+            .tree(kind: .expense, ledgerID: ledger.uuid, includeArchived: true)
+        #expect(global.map(\.category.name) == ["全局"])
+        #expect(scoped.map(\.category.name) == ["旅行专属"])
+    }
+
     @Test func 记账树剔除归档子分类() throws {
         let context = try makeContext()
         let dining = try makeCategory(context, name: "餐饮")

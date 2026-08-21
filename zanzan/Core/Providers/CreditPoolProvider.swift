@@ -18,13 +18,14 @@ struct CreditPoolOverview {
 struct CreditPoolProvider {
     let context: ModelContext
 
-    func overview(poolUUID: UUID) throws -> CreditPoolOverview {
+    func overview(poolUUID: UUID, asOf: Date = .now) throws -> CreditPoolOverview {
         let poolDescriptor = FetchDescriptor<CreditPool>(
             predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == poolUUID }
         )
         guard let pool = try context.fetch(poolDescriptor).first else {
             throw CreditPoolProviderError.poolNotFound
         }
+        guard pool.totalLimitMinorUnits >= 0 else { throw MoneyArithmeticError.overflow }
         let members = try context.fetch(
             FetchDescriptor<Account>(
                 predicate: #Predicate { !$0.isSoftDeleted && $0.creditPoolID == poolUUID }
@@ -40,7 +41,10 @@ struct CreditPoolProvider {
                 mismatched.insert(member.uuid)
                 continue
             }
-            used += try max(0, -balanceProvider.balanceMinorUnits(of: member))
+            let balance = try balanceProvider.balanceMinorUnits(of: member, asOf: asOf)
+            if balance < 0 {
+                used = try MoneyArithmetic.add(used, MoneyArithmetic.magnitude(balance))
+            }
         }
         return CreditPoolOverview(
             pool: pool, usedMinorUnits: used, currencyMismatchedMemberUUIDs: mismatched
@@ -53,7 +57,7 @@ enum CreditPoolProviderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .poolNotFound: String(localized: "授信池不存在或已删除")
+        case .poolNotFound: ZanzanLocalization.string( "授信池不存在或已删除")
         }
     }
 }

@@ -24,7 +24,7 @@ struct InstallmentPlanDraftTests {
         #expect(v.name == "iPhone 分期") // trim 归一化
         #expect(v.principalMinorUnits == 999_900)
         #expect(v.totalPeriods == 24)
-        #expect(v.flatFeePerPeriodMinorUnits == 2_500)
+        #expect(v.totalChargeMinorUnits == 60_000) // 旧每期手续费入口归一化为息费总额
         #expect(v.annualRateBps == nil) // 固定手续费类分期年利率恒 nil（5.9）
         #expect(v.customPeriods.isEmpty)
     }
@@ -67,7 +67,7 @@ struct InstallmentPlanDraftTests {
     }
 
     @Test func 计息方式缺年利率被拒() throws {
-        for kind in [AmortizationKind.annuity, .linearPrincipal] {
+        for kind in [AmortizationKind.annuity, .linearPrincipal, .interestOnly] {
             var draft = flatFeeDraft()
             draft.amortizationKind = kind
             draft.annualRateBps = nil
@@ -83,6 +83,27 @@ struct InstallmentPlanDraftTests {
         draft.annualRateBps = 0 // 免息分期
         let v = try draft.validated()
         #expect(v.annualRateBps == 0)
+    }
+
+    @Test func 多期先息后本精确拒绝零利率_单期仍可免息() throws {
+        var draft = flatFeeDraft()
+        draft.amortizationKind = .interestOnly
+        draft.annualRateBps = 0
+        #expect(throws: InstallmentPlanDraftError.zeroRateMultiPeriodInterestOnly) {
+            _ = try draft.validated()
+        }
+
+        draft.totalPeriods = 1
+        let validated = try draft.validated()
+        #expect(validated.annualRateBps == 0)
+    }
+
+    @Test func 自动结算保留字段当前必须为false() {
+        var draft = flatFeeDraft()
+        draft.isAutoSettle = true
+        #expect(throws: InstallmentPlanDraftError.automaticSettlementUnsupported) {
+            _ = try draft.validated()
+        }
     }
 
     @Test func flatFee缺手续费或为负被拒() throws {
@@ -102,16 +123,19 @@ struct InstallmentPlanDraftTests {
         draft.annualRateBps = 1_200
         draft.flatFeePerPeriodMinorUnits = 999
         let v = try draft.validated()
-        #expect(v.flatFeePerPeriodMinorUnits == nil)
+        #expect(v.totalChargeMinorUnits == nil)
         #expect(v.annualRateBps == 1_200)
     }
 
-    @Test func 先息后本被明确阻断() throws {
-        // 5.10 interestOnly 前 n−1 期本金为 0，与 5.4 amount 恒正冲突，入口阻断
+    @Test func 先息后本允许纯息期且保留利率() throws {
         var draft = flatFeeDraft()
         draft.amortizationKind = .interestOnly
         draft.annualRateBps = 1_200
-        #expect(throws: InstallmentPlanDraftError.interestOnlyUnsupported) { _ = try draft.validated() }
+        draft.principalMinorUnits = 1 // 先息后本不要求本金至少等于期数
+        let v = try draft.validated()
+        #expect(v.amortizationKind == .interestOnly)
+        #expect(v.annualRateBps == 1_200)
+        #expect(v.principalMinorUnits == 1)
     }
 
     @Test func custom行数不匹配被拒() throws {
@@ -163,8 +187,93 @@ struct InstallmentPlanDraftTests {
         ]
         let v = try draft.validated()
         #expect(v.customPeriods == draft.customPeriods)
-        #expect(v.flatFeePerPeriodMinorUnits == nil)
+        #expect(v.totalChargeMinorUnits == nil)
         #expect(v.annualRateBps == nil)
+    }
+
+    @Test func 四个银行预设映射完整且规则不含费率金额() {
+        #expect(InstallmentCalculationPreset.allCases == [
+            .standard, .icbcPerPeriod, .icbcUpfront, .abc,
+        ])
+
+        #expect(InstallmentCalculationPreset.standard.rules == .init(
+            chargeCollectionKind: .perPeriod,
+            principalRoundingKind: .downToMinorUnit,
+            principalRemainderKind: .lastPeriod,
+            chargeRoundingKind: .downToMinorUnit,
+            chargeRemainderKind: .lastPeriod
+        ))
+        #expect(InstallmentCalculationPreset.icbcPerPeriod.rules == .init(
+            chargeCollectionKind: .perPeriod,
+            principalRoundingKind: .downToMinorUnit,
+            principalRemainderKind: .firstPeriod,
+            chargeRoundingKind: .downToMinorUnit,
+            chargeRemainderKind: .firstPeriod
+        ))
+        #expect(InstallmentCalculationPreset.icbcUpfront.rules == .init(
+            chargeCollectionKind: .upfrontFirstPeriod,
+            principalRoundingKind: .downToMinorUnit,
+            principalRemainderKind: .firstPeriod,
+            chargeRoundingKind: .downToMinorUnit,
+            chargeRemainderKind: .firstPeriod
+        ))
+        #expect(InstallmentCalculationPreset.abc.rules == .init(
+            chargeCollectionKind: .perPeriod,
+            principalRoundingKind: .nearestMajorUnit,
+            principalRemainderKind: .lastPeriod,
+            chargeRoundingKind: .nearestMinorUnit,
+            chargeRemainderKind: .lastPeriod
+        ))
+
+        let expectedLabels: Set<String> = [
+            "chargeCollectionKind",
+            "principalRoundingKind",
+            "principalRemainderKind",
+            "chargeRoundingKind",
+            "chargeRemainderKind",
+        ]
+        for preset in InstallmentCalculationPreset.allCases {
+            let labels = Set(Mirror(reflecting: preset.rules).children.compactMap(\.label))
+            #expect(labels == expectedLabels)
+            #expect(!labels.contains(where: { $0.localizedCaseInsensitiveContains("rate") }))
+            #expect(!labels.contains(where: { $0.localizedCaseInsensitiveContains("amount") }))
+        }
+    }
+
+    @Test func 银行预设限定产品范围并只读关联官网来源() {
+        #expect(
+            ZanzanLocalization.string(
+                InstallmentCalculationPreset.icbcPerPeriod.title,
+                language: .simplifiedChinese
+            ) == "工行信用卡现金分期（分期收取）"
+        )
+        #expect(
+            ZanzanLocalization.string(
+                InstallmentCalculationPreset.icbcUpfront.title,
+                language: .simplifiedChinese
+            ) == "工行信用卡现金分期（首期一次收取）"
+        )
+        #expect(InstallmentCalculationPreset.standard.sourceURL == nil)
+        #expect(
+            InstallmentCalculationPreset.icbcPerPeriod.sourceURL?.absoluteString
+                == "https://media.icbc.com.cn/agreement/1200289008933597184.html"
+        )
+        #expect(
+            InstallmentCalculationPreset.icbcUpfront.sourceURL
+                == InstallmentCalculationPreset.icbcPerPeriod.sourceURL
+        )
+        #expect(
+            InstallmentCalculationPreset.abc.sourceURL?.absoluteString
+                == "https://www.abchina.com/cn/CreditCard/AboutUs/Update/202510/W020251029598620797047.pdf"
+        )
+        for preset in InstallmentCalculationPreset.allCases {
+            #expect(
+                !ZanzanLocalization.string(
+                    preset.productScopeNote,
+                    language: .simplifiedChinese
+                ).isEmpty
+            )
+        }
     }
 
     // MARK: - DraftLimits 边界

@@ -70,6 +70,63 @@ struct BalanceSnapshotServiceTests {
         #expect(snapshot.balanceMinorUnits == 13_900)
     }
 
+    @Test func 外币历史快照同时截断未来余额与未来汇率() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let account = Account(name: "美元卡", kind: .fund)
+        account.currencyCode = "USD"
+        account.initialBalanceMinorUnits = 10_000
+        context.insert(account)
+
+        let past = Transaction(
+            kind: .income,
+            amountMinorUnits: 1_000,
+            occurredAt: Self.at(1),
+            ledgerID: UUID()
+        )
+        past.account = account
+        past.currencyCode = "USD"
+        past.fxRateToBase = Decimal(string: "7.00")
+        let future = Transaction(
+            kind: .expense,
+            amountMinorUnits: 5_000,
+            occurredAt: Self.at(3),
+            ledgerID: UUID()
+        )
+        future.account = account
+        future.currencyCode = "USD"
+        future.fxRateToBase = Decimal(string: "7.50")
+        context.insert(past)
+        context.insert(future)
+        try context.save()
+
+        let snapshot = try BalanceSnapshotService(context: context)
+            .generateSnapshot(accountUUID: account.uuid, asOf: Self.at(2))
+        #expect(snapshot.balanceMinorUnits == 11_000)
+        #expect(snapshot.fxRateToBase == Decimal(string: "7.00"))
+    }
+
+    @Test func 快照余额聚合溢出抛MoneyArithmeticError且不留半成品() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let account = Account(name: "极值账户", kind: .fund)
+        account.initialBalanceMinorUnits = Int.max
+        context.insert(account)
+        let income = Transaction(
+            kind: .income,
+            amountMinorUnits: 1,
+            occurredAt: Self.at(1),
+            ledgerID: UUID()
+        )
+        income.account = account
+        context.insert(income)
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try BalanceSnapshotService(context: context)
+                .generateSnapshot(accountUUID: account.uuid, asOf: Self.at(2))
+        }
+        #expect(try context.fetchCount(FetchDescriptor<BalanceSnapshot>()) == 0)
+    }
+
     // MARK: - 幂等
 
     @Test func 同账户同时点重复生成不新增行() throws {
@@ -130,6 +187,53 @@ struct BalanceSnapshotServiceTests {
         let accountIDs = Set(snapshots.map(\.accountID))
         #expect(accountIDs == [cash.uuid, card.uuid])
         #expect(try activeSnapshots(of: deleted.uuid, in: context).isEmpty)
+    }
+
+    @Test func 批量第二账户溢出后上下文无快照变更() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let valid = Account(name: "正常账户", kind: .fund)
+        valid.sortOrder = 0
+        let overflow = Account(name: "溢出账户", kind: .fund)
+        overflow.sortOrder = 1
+        overflow.initialBalanceMinorUnits = Int.max
+        let income = Transaction(
+            kind: .income,
+            amountMinorUnits: 1,
+            occurredAt: Self.at(1),
+            ledgerID: UUID()
+        )
+        income.account = overflow
+        context.insert(valid)
+        context.insert(overflow)
+        context.insert(income)
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try BalanceSnapshotService(context: context).generateSnapshots(asOf: Self.at(2))
+        }
+        #expect(try context.fetchCount(FetchDescriptor<BalanceSnapshot>()) == 0)
+    }
+
+    @Test func 脏快照全量重建后逐分收敛() throws {
+        let context = ModelContext(try AppModelContainer.make(inMemory: true))
+        let (cash, card) = try makeFixture(context: context)
+        let service = BalanceSnapshotService(context: context)
+        let asOf = Self.at(4)
+        let corrupt = try service.generateSnapshot(accountUUID: cash.uuid, asOf: asOf)
+        corrupt.balanceMinorUnits = -1
+        try context.save()
+
+        let rebuilt = try service.rebuildAllSnapshots(asOf: asOf)
+        #expect(rebuilt.count == 2)
+        #expect(corrupt.isSoftDeleted)
+        #expect(
+            try AccountBalanceProvider(context: context)
+                .balanceMinorUnits(of: cash, asOf: asOf) == 11_850
+        )
+        #expect(
+            try AccountBalanceProvider(context: context)
+                .balanceMinorUnits(of: card, asOf: asOf) == 2_000
+        )
     }
 
     // MARK: - 一致性校验

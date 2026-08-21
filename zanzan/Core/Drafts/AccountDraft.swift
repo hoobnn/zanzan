@@ -13,6 +13,7 @@ struct AccountDraft {
     var paymentDueDay: Int? = nil
     var note: String = ""
     var isIncludedInNetWorth: Bool = true
+    var isSelectableForRecord: Bool = true
 
     struct Validated {
         let name: String
@@ -25,6 +26,7 @@ struct AccountDraft {
         let paymentDueDay: Int?
         let note: String
         let isIncludedInNetWorth: Bool
+        let isSelectableForRecord: Bool
     }
 
     func validated() throws -> Validated {
@@ -33,6 +35,8 @@ struct AccountDraft {
         guard name.count <= DraftLimits.maxNameLength else { throw AccountDraftError.nameTooLong }
         let subtitle = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard subtitle.count <= DraftLimits.maxNameLength else { throw AccountDraftError.subtitleTooLong }
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count <= DraftLimits.maxNoteLength else { throw AccountDraftError.noteTooLong }
         // ISO 4217 格式校验：归一化大写后须为三位大写字母
         let currencyCode = currencyCode.trimmingCharacters(in: .whitespaces).uppercased()
         guard currencyCode.count == 3, currencyCode.allSatisfy({ ("A"..."Z").contains($0) }) else {
@@ -67,8 +71,9 @@ struct AccountDraft {
             creditLimitMinorUnits: creditLimit,
             statementDay: statementDay,
             paymentDueDay: paymentDueDay,
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-            isIncludedInNetWorth: isIncludedInNetWorth
+            note: note,
+            isIncludedInNetWorth: isIncludedInNetWorth,
+            isSelectableForRecord: isSelectableForRecord
         )
     }
 }
@@ -87,6 +92,7 @@ extension AccountDraft {
         paymentDueDay = account.paymentDueDay
         note = account.note
         isIncludedInNetWorth = account.isIncludedInNetWorth
+        isSelectableForRecord = account.isSelectableForRecord
     }
 }
 
@@ -94,6 +100,7 @@ enum AccountDraftError: LocalizedError {
     case emptyName
     case nameTooLong
     case subtitleTooLong
+    case noteTooLong
     case invalidCurrencyCode
     case invalidInitialBalance
     case invalidCreditLimit
@@ -101,13 +108,14 @@ enum AccountDraftError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: String(localized: "账户名不能为空")
-        case .nameTooLong: String(localized: "账户名不能超过 \(DraftLimits.maxNameLength) 字")
-        case .subtitleTooLong: String(localized: "账户副标题不能超过 \(DraftLimits.maxNameLength) 字")
-        case .invalidCurrencyCode: String(localized: "币种代码须为 3 位大写字母（ISO 4217）")
-        case .invalidInitialBalance: String(localized: "期初余额格式不正确")
-        case .invalidCreditLimit: String(localized: "信用额度格式不正确")
-        case .invalidDayOfMonth: String(localized: "账单日/还款日须在 1–28 之间")
+        case .emptyName: ZanzanLocalization.string( "账户名不能为空")
+        case .nameTooLong: ZanzanLocalization.string( "账户名不能超过 \(DraftLimits.maxNameLength) 字")
+        case .subtitleTooLong: ZanzanLocalization.string( "账户副标题不能超过 \(DraftLimits.maxNameLength) 字")
+        case .noteTooLong: ZanzanLocalization.string( "备注不能超过 \(DraftLimits.maxNoteLength) 字")
+        case .invalidCurrencyCode: ZanzanLocalization.string( "币种代码须为 3 位大写字母（ISO 4217）")
+        case .invalidInitialBalance: ZanzanLocalization.string( "期初余额格式不正确")
+        case .invalidCreditLimit: ZanzanLocalization.string( "信用额度格式不正确")
+        case .invalidDayOfMonth: ZanzanLocalization.string( "账单日/还款日须在 1–28 之间")
         }
     }
 }

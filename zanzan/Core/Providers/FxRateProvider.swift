@@ -17,9 +17,17 @@ enum FxConversion {
 
     /// 外币最小货币单位金额按汇率快照折本位币分，四舍五入（与快照/分期同用 .plain 口径）
     static func toBaseMinorUnits(_ minorUnits: Int, rate: Decimal) -> Int {
+        (try? checkedToBaseMinorUnits(minorUnits, rate: rate))
+            ?? (minorUnits < 0 ? Int.min : Int.max)
+    }
+
+    static func checkedToBaseMinorUnits(_ minorUnits: Int, rate: Decimal) throws -> Int {
         var raw = Decimal(minorUnits) * rate
         var rounded = Decimal()
         NSDecimalRound(&rounded, &raw, 0, .plain)
+        guard rounded >= Decimal(Int.min), rounded <= Decimal(Int.max) else {
+            throw MoneyArithmeticError.overflow
+        }
         return NSDecimalNumber(decimal: rounded).intValue
     }
 }

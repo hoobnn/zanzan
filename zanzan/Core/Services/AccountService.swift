@@ -15,14 +15,26 @@ struct AccountService {
         apply(v, to: account)
         account.sortOrder = activeCount
         context.insert(account)
-        try context.save()
+        try context.zanzanSave()
         return account
     }
 
     func updateAccount(uuid: UUID, draft: AccountDraft) throws {
         let v = try draft.validated()
         let account = try fetchActiveAccount(uuid)
+        guard account.kind != nil else { throw AccountServiceError.unsupportedKind }
         let isInitialBalanceChanged = v.initialBalanceMinorUnits != account.initialBalanceMinorUnits
+        if v.kind != account.kind {
+            guard account.creditPoolID == nil else {
+                throw AccountServiceError.kindLockedByCreditPool
+            }
+            let planCount = try context.fetchCount(
+                FetchDescriptor<InstallmentPlan>(predicate: #Predicate {
+                    !$0.isSoftDeleted && $0.accountID == uuid
+                })
+            )
+            guard planCount == 0 else { throw AccountServiceError.kindLockedByInstallmentPlan }
+        }
         // 已有流水（含软删，恢复后口径仍须一致）禁改币种——历史流水币种语义不可漂移
         if v.currencyCode != account.currencyCode {
             // 池内成员卡改币种会破坏「成员币种与池一致」不变量（§5.8），须先解绑
@@ -45,14 +57,17 @@ struct AccountService {
                 accountUUIDs: [uuid], onOrAfter: .distantPast, context: context
             )
         }
-        try context.save()
+        try context.zanzanSave()
     }
 
     func setArchived(uuid: UUID, isArchived: Bool) throws {
         let account = try fetchActiveAccount(uuid)
+        if isArchived {
+            try ensureNotReferencedByRecurringRule(uuid)
+        }
         account.isArchived = isArchived
         account.updatedAt = .now
-        try context.save()
+        try context.zanzanSave()
     }
 
     /// 软删：任何活跃流水引用（收支/转出/转入）、周期规则模板引用（付款/转入方）、
@@ -66,55 +81,50 @@ struct AccountService {
         )
         guard referenceCount == 0 else { throw AccountServiceError.hasActiveTransactions }
         // 暂停规则可恢复、完结计划可撤销结清，未软删的一律算活跃引用
-        let accountID: UUID? = uuid
-        let ruleCount = try context.fetchCount(
-            FetchDescriptor<RecurringRule>(predicate: #Predicate {
-                !$0.isSoftDeleted && ($0.templateAccountID == accountID || $0.templateTargetAccountID == accountID)
-            })
-        )
-        guard ruleCount == 0 else { throw AccountServiceError.referencedByRecurringRule }
+        try ensureNotReferencedByRecurringRule(uuid)
         let planCount = try context.fetchCount(
             FetchDescriptor<InstallmentPlan>(predicate: #Predicate {
                 !$0.isSoftDeleted && $0.accountID == uuid
             })
         )
         guard planCount == 0 else { throw AccountServiceError.referencedByInstallmentPlan }
+        let deletedAt = Date.now
         account.isSoftDeleted = true
-        account.updatedAt = .now
+        account.updatedAt = deletedAt
         let snapshots = try context.fetch(
             FetchDescriptor<BalanceSnapshot>(predicate: #Predicate { !$0.isSoftDeleted && $0.accountID == uuid })
         )
         for snapshot in snapshots {
             snapshot.isSoftDeleted = true
-            snapshot.updatedAt = .now
+            snapshot.updatedAt = deletedAt
         }
-        try context.save()
+        try context.zanzanSave()
     }
 
     /// 撤销软删（§4 撤销恢复按相反方向执行）：恢复账户并级联恢复删除时被级联软删的余额快照。
     /// 幂等：重复恢复无副作用。
     func undoSoftDeleteAccount(uuid: UUID) throws {
-        let account = try fetchAccount(uuid, includeDeleted: true)
-        let deletedAt = account.updatedAt // 软删后无命令可触碰该账户，updatedAt 即删除时刻
-        // 删除期间授信池可能已被软删（池删只解绑活跃成员卡）：补执行错过的解绑级联（§5.8）
-        if let poolID = account.creditPoolID, try !isPoolActive(poolID) {
-            account.creditPoolID = nil
+        do {
+            let account = try fetchAccount(uuid, includeDeleted: true)
+            guard account.isSoftDeleted else { return }
+            guard account.kind != nil else { throw AccountServiceError.unsupportedKind }
+            let deletedAt = account.updatedAt // 软删后无命令可触碰该账户，updatedAt 即删除时刻
+            account.isSoftDeleted = false
+            account.updatedAt = .now
+            let snapshots = try context.fetch(
+                FetchDescriptor<BalanceSnapshot>(predicate: #Predicate {
+                    $0.isSoftDeleted && $0.accountID == uuid && $0.updatedAt == deletedAt
+                })
+            )
+            for snapshot in snapshots {
+                snapshot.isSoftDeleted = false
+                snapshot.updatedAt = .now
+            }
+            try context.zanzanSave()
+        } catch {
+            context.rollback()
+            throw error
         }
-        account.isSoftDeleted = false
-        account.updatedAt = .now
-        // ponytail: 无删除来源标记，按 updatedAt >= 删除时刻区分「删除级联软删」与
-        // 「历史失效（§5.13 invalidateSnapshots）」的快照——复活失效快照会违反
-        // 「宁可少快照不可留脏快照」，宁漏勿脏；需精确恢复可将来加删除来源标记
-        let snapshots = try context.fetch(
-            FetchDescriptor<BalanceSnapshot>(predicate: #Predicate {
-                $0.isSoftDeleted && $0.accountID == uuid && $0.updatedAt >= deletedAt
-            })
-        )
-        for snapshot in snapshots {
-            snapshot.isSoftDeleted = false
-            snapshot.updatedAt = .now
-        }
-        try context.save()
     }
 
     /// 校准到实际余额（设计文档 5.2）：按与派生余额的差额生成一笔 `adjustment` 收支流水，
@@ -129,19 +139,37 @@ struct AccountService {
     ) throws -> Transaction? {
         let account = try fetchActiveAccount(accountUUID)
         guard !account.isArchived else { throw AccountServiceError.accountArchived }
+        guard DraftLimits.occurredAtRange.contains(occurredAt) else {
+            throw AccountServiceError.calibrationDateOutOfRange
+        }
+        guard (-MoneyAmount.maxAbsoluteMinorUnits...MoneyAmount.maxAbsoluteMinorUnits)
+            .contains(actualBalanceMinorUnits) else {
+            throw AccountServiceError.calibrationAmountOutOfRange
+        }
         // 先解析汇率再建流水，避免抛错前污染上下文
         var resolvedRate: Decimal? = nil
         if account.currencyCode != FxConversion.baseCurrencyCode {
-            let rate = try fxRateToBase ?? FxRateProvider(context: context).rate(for: account.currencyCode)
-            guard let rate, rate > 0 else { throw AccountServiceError.missingFxRate }
+            let rate = try fxRateToBase
+                ?? FxRateProvider(context: context).rate(
+                    for: account.currencyCode, asOf: occurredAt
+                )
+            let maxRate = Decimal(Int.max) / Decimal(MoneyAmount.maxAbsoluteMinorUnits)
+            guard let rate, rate > 0, rate <= maxRate else {
+                throw AccountServiceError.missingFxRate
+            }
             resolvedRate = rate
         }
-        let currentBalance = try AccountBalanceProvider(context: context).balanceMinorUnits(of: account)
-        let delta = actualBalanceMinorUnits - currentBalance
+        let currentBalance = try AccountBalanceProvider(context: context)
+            .balanceMinorUnits(of: account, asOf: occurredAt)
+        let delta = try MoneyArithmetic.subtract(actualBalanceMinorUnits, currentBalance)
         guard delta != 0 else { return nil }
+        let adjustmentAmount = try MoneyArithmetic.magnitude(delta)
+        guard adjustmentAmount <= MoneyAmount.maxAbsoluteMinorUnits else {
+            throw AccountServiceError.calibrationAmountOutOfRange
+        }
         let tx = Transaction(
             kind: delta > 0 ? .income : .expense,
-            amountMinorUnits: abs(delta),
+            amountMinorUnits: adjustmentAmount,
             occurredAt: occurredAt,
             ledgerID: try fetchDefaultLedgerID()
         )
@@ -155,8 +183,19 @@ struct AccountService {
         try BalanceSnapshotService.invalidateSnapshots(
             accountUUIDs: [account.uuid], onOrAfter: occurredAt, context: context
         )
-        try context.save()
+        try context.zanzanSave()
         return tx
+    }
+
+    private func ensureNotReferencedByRecurringRule(_ uuid: UUID) throws {
+        let accountID: UUID? = uuid
+        let ruleCount = try context.fetchCount(
+            FetchDescriptor<RecurringRule>(predicate: #Predicate {
+                !$0.isSoftDeleted
+                    && ($0.templateAccountID == accountID || $0.templateTargetAccountID == accountID)
+            })
+        )
+        guard ruleCount == 0 else { throw AccountServiceError.referencedByRecurringRule }
     }
 
     private func apply(_ v: AccountDraft.Validated, to account: Account) {
@@ -169,6 +208,7 @@ struct AccountService {
         account.paymentDueDay = v.paymentDueDay
         account.note = v.note
         account.isIncludedInNetWorth = v.isIncludedInNetWorth
+        account.isSelectableForRecord = v.isSelectableForRecord
     }
 
     private func fetchActiveAccount(_ uuid: UUID) throws -> Account {
@@ -185,16 +225,12 @@ struct AccountService {
         return account
     }
 
-    private func isPoolActive(_ uuid: UUID) throws -> Bool {
-        try context.fetchCount(
-            FetchDescriptor<CreditPool>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid })
-        ) > 0
-    }
-
     /// 校准流水归属账本：优先默认账本，违例回落首本（§4 同步合并兜底口径）。
     private func fetchDefaultLedgerID() throws -> UUID {
         let ledgers = try context.fetch(
-            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted })
+            FetchDescriptor<Ledger>(predicate: #Predicate {
+                !$0.isSoftDeleted && !$0.isArchived
+            })
         )
         guard let ledger = ledgers.first(where: \.isDefault) ?? ledgers.first else {
             throw AccountServiceError.noLedgerAvailable
@@ -206,25 +242,35 @@ struct AccountService {
 enum AccountServiceError: LocalizedError {
     case accountNotFound
     case accountArchived
+    case calibrationDateOutOfRange
+    case calibrationAmountOutOfRange
     case hasActiveTransactions
     case referencedByRecurringRule
     case referencedByInstallmentPlan
     case noLedgerAvailable
     case currencyImmutable
     case currencyLockedByCreditPool
+    case kindLockedByCreditPool
+    case kindLockedByInstallmentPlan
     case missingFxRate
+    case unsupportedKind
 
     var errorDescription: String? {
         switch self {
-        case .accountNotFound: String(localized: "账户不存在或已删除")
-        case .accountArchived: String(localized: "账户已归档，恢复后才能校准余额")
-        case .hasActiveTransactions: String(localized: "账户名下还有流水，无法删除；可先归档或转移流水")
-        case .referencedByRecurringRule: String(localized: "有周期计划使用该账户，请先调整或删除相关计划")
-        case .referencedByInstallmentPlan: String(localized: "有分期/贷款计划使用该账户，请先处理相关计划")
-        case .noLedgerAvailable: String(localized: "没有可用账本，无法生成校准流水")
-        case .currencyImmutable: String(localized: "账户已有流水，币种不可修改")
-        case .currencyLockedByCreditPool: String(localized: "账户在授信池内，需先解绑才能修改币种")
-        case .missingFxRate: String(localized: "该币种暂无汇率快照，请提供汇率或先记一笔带汇率的流水")
+        case .accountNotFound: ZanzanLocalization.string( "账户不存在或已删除")
+        case .accountArchived: ZanzanLocalization.string( "账户已归档，恢复后才能校准余额")
+        case .calibrationDateOutOfRange: ZanzanLocalization.string( "校准时间超出可记账范围")
+        case .calibrationAmountOutOfRange: ZanzanLocalization.string( "校准金额或所需调整额超出单笔可支持范围")
+        case .hasActiveTransactions: ZanzanLocalization.string( "账户名下还有流水，无法删除；可先归档或转移流水")
+        case .referencedByRecurringRule: ZanzanLocalization.string( "有周期计划使用该账户，请先调整或删除相关计划")
+        case .referencedByInstallmentPlan: ZanzanLocalization.string( "有分期/贷款计划使用该账户，请先处理相关计划")
+        case .noLedgerAvailable: ZanzanLocalization.string( "没有可用账本，无法生成校准流水")
+        case .currencyImmutable: ZanzanLocalization.string( "账户已有流水，币种不可修改")
+        case .currencyLockedByCreditPool: ZanzanLocalization.string( "账户在授信池内，需先解绑才能修改币种")
+        case .kindLockedByCreditPool: ZanzanLocalization.string( "账户在授信池内，需先解绑才能修改账户类型")
+        case .kindLockedByInstallmentPlan: ZanzanLocalization.string( "账户被分期或贷款计划使用，无法修改账户类型")
+        case .missingFxRate: ZanzanLocalization.string( "该币种暂无汇率快照，请提供汇率或先记一笔带汇率的流水")
+        case .unsupportedKind: ZanzanLocalization.string( "该账户由更高版本创建，请升级 App 后再编辑")
         }
     }
 }

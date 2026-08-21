@@ -32,9 +32,9 @@ struct CreditCardStatementProvider {
             containing: referenceDate, statementDay: statementDay, calendar: calendar
         )
         let statementAmount = try statementAmountMinorUnits(
-            of: account, from: periodStart, to: periodEndExclusive
+            of: account, from: periodStart, to: periodEndExclusive, asOf: referenceDate
         )
-        let availableCredit = try availableCreditMinorUnits(of: account)
+        let availableCredit = try availableCreditMinorUnits(of: account, asOf: referenceDate)
         return CreditCardStatement(
             periodStart: periodStart,
             periodEndExclusive: periodEndExclusive,
@@ -88,31 +88,53 @@ struct CreditCardStatementProvider {
     // MARK: - 派生金额
 
     /// 周期内净新增欠款：Σ 余额影响取反，下限 0（还款/溢缴冲抵消费）。
-    private func statementAmountMinorUnits(of account: Account, from start: Date, to endExclusive: Date) throws -> Int {
+    private func statementAmountMinorUnits(
+        of account: Account,
+        from start: Date,
+        to endExclusive: Date,
+        asOf referenceDate: Date
+    ) throws -> Int {
         let uuid = account.uuid
         let descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate {
                 !$0.isSoftDeleted
                     && $0.occurredAt >= start && $0.occurredAt < endExclusive
+                    && $0.occurredAt <= referenceDate
                     && ($0.account?.uuid == uuid || $0.targetAccount?.uuid == uuid)
             }
         )
-        let netDelta = try context.fetch(descriptor).reduce(0) { $0 + $1.balanceDeltaMinorUnits(for: uuid) }
-        return max(0, -netDelta)
+        let netDelta = try context.fetch(descriptor).reduce(0) {
+            try MoneyArithmetic.add($0, $1.checkedBalanceDeltaMinorUnits(for: uuid))
+        }
+        return netDelta < 0 ? try MoneyArithmetic.magnitude(netDelta) : 0
     }
 
     /// 剩余可用额度（5.8）：单卡欠款 = max(0, −派生余额)；
     /// 池成员无子限额即池可用，有子限额取 min(子限额 − 单卡欠款, 池可用)；
     /// 独立卡 = max(0, 额度 − 欠款)；池已删（读路径兜底）按独立额度口径。
-    private func availableCreditMinorUnits(of account: Account) throws -> Int? {
-        let debt = try max(0, -AccountBalanceProvider(context: context).balanceMinorUnits(of: account))
-        let independentAvailable = account.creditLimitMinorUnits.map { max(0, $0 - debt) }
+    private func availableCreditMinorUnits(of account: Account, asOf referenceDate: Date) throws -> Int? {
+        let balance = try AccountBalanceProvider(context: context)
+            .balanceMinorUnits(of: account, asOf: referenceDate)
+        let debt = balance < 0 ? try MoneyArithmetic.magnitude(balance) : 0
+        let independentAvailable = try account.creditLimitMinorUnits.map {
+            max(0, try MoneyArithmetic.subtract($0, debt))
+        }
         guard let poolUUID = account.creditPoolID else { return independentAvailable }
-        guard let poolOverview = try? CreditPoolProvider(context: context).overview(poolUUID: poolUUID) else {
+        let poolOverview: CreditPoolOverview
+        do {
+            poolOverview = try CreditPoolProvider(context: context)
+                .overview(poolUUID: poolUUID, asOf: referenceDate)
+        } catch CreditPoolProviderError.poolNotFound {
             return independentAvailable // 池已软删/缺失：兜底回独立额度，不 crash（§4 同步合并兜底）
         }
         guard let subLimit = account.creditLimitMinorUnits else { return poolOverview.availableMinorUnits }
-        return max(0, min(subLimit - debt, poolOverview.availableMinorUnits))
+        return max(
+            0,
+            min(
+                try MoneyArithmetic.subtract(subLimit, debt),
+                poolOverview.availableMinorUnits
+            )
+        )
     }
 }
 
@@ -123,9 +145,9 @@ enum CreditCardStatementProviderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notCreditAccount: String(localized: "仅信用卡类账户有账单周期")
-        case .missingStatementDay: String(localized: "该信用卡未设置账单日")
-        case .invalidStatementDay: String(localized: "账单日须在 1–31 之间")
+        case .notCreditAccount: ZanzanLocalization.string( "仅信用卡类账户有账单周期")
+        case .missingStatementDay: ZanzanLocalization.string( "该信用卡未设置账单日")
+        case .invalidStatementDay: ZanzanLocalization.string( "账单日须在 1–31 之间")
         }
     }
 }

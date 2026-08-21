@@ -52,10 +52,54 @@ enum MoneyAmount {
     }
 }
 
-/// 金额展示格式化唯一入口（设计文档 §4）。本位币锁 CNY、locale 锁 zh_CN（测试确定性）。
-func formatAmount(_ minorUnits: Int, withSign: Bool = false) -> String {
+/// 金额聚合统一走溢出检查。单笔合法不代表总额一定能装进 `Int`。
+enum MoneyArithmetic {
+    nonisolated static func add(_ lhs: Int, _ rhs: Int) throws -> Int {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else { throw MoneyArithmeticError.overflow }
+        return value
+    }
+
+    nonisolated static func subtract(_ lhs: Int, _ rhs: Int) throws -> Int {
+        let (value, overflow) = lhs.subtractingReportingOverflow(rhs)
+        guard !overflow else { throw MoneyArithmeticError.overflow }
+        return value
+    }
+
+    nonisolated static func negate(_ value: Int) throws -> Int {
+        try subtract(0, value)
+    }
+
+    nonisolated static func magnitude(_ value: Int) throws -> Int {
+        value >= 0 ? value : try negate(value)
+    }
+
+    nonisolated static func sum<S: Sequence>(
+        _ values: S, startingAt initialValue: Int = 0
+    ) throws -> Int
+    where S.Element == Int {
+        try values.reduce(initialValue, add)
+    }
+}
+
+enum MoneyArithmeticError: LocalizedError {
+    case overflow
+
+    var errorDescription: String? {
+        ZanzanLocalization.string("金额合计超出可支持范围")
+    }
+}
+
+/// 金额展示格式化唯一入口（设计文档 §4）。本位币锁 CNY，locale 跟随应用内语言。
+func formatAmount(
+    _ minorUnits: Int,
+    withSign: Bool = false,
+    currencyCode: String = "CNY",
+    language: ZanzanAppLanguage? = nil
+) -> String {
     let decimal = Decimal(minorUnits) / 100
-    let core = decimal.formatted(.currency(code: "CNY").locale(Locale(identifier: "zh_CN")))
+    let locale = (language ?? ZanzanLocalization.currentLanguage).locale
+    let core = decimal.formatted(.currency(code: currencyCode).locale(locale))
     if withSign && minorUnits > 0 { return "+\(core)" }
     return core
 }

@@ -42,16 +42,19 @@ struct AssetsOverview {
 struct AssetsOverviewProvider {
     let context: ModelContext
 
-    func overview() throws -> AssetsOverview {
+    func overview(asOf: Date = .now) throws -> AssetsOverview {
         let descriptor = FetchDescriptor<Account>(
             predicate: #Predicate { !$0.isSoftDeleted },
             sortBy: [SortDescriptor(\.sortOrder)]
         )
         let accounts = try context.fetch(descriptor)
         let balanceProvider = AccountBalanceProvider(context: context)
-        // ponytail: 每账户一次全量求和，量级上来再走 BalanceSnapshot 检查点。
+        // 每账户余额由 AccountBalanceProvider 复用最近快照检查点并补算后续流水。
         let items = try accounts.map { account in
-            AssetsOverview.Item(account: account, balanceMinorUnits: try balanceProvider.balanceMinorUnits(of: account))
+            AssetsOverview.Item(
+                account: account,
+                balanceMinorUnits: try balanceProvider.balanceMinorUnits(of: account, asOf: asOf)
+            )
         }
 
         // 口径②折算：每账户附带折本位币后的余额，汇总一律用它（CNY 恒等，不进披露）
@@ -62,34 +65,51 @@ struct AssetsOverviewProvider {
             let code = item.account.currencyCode
             guard code != FxConversion.baseCurrencyCode else { return (item, item.balanceMinorUnits) }
             if fallbackCurrencyCodes.contains(code) { return (item, item.balanceMinorUnits) }
-            if let rate = try ratesByCurrency[code] ?? rateProvider.rate(for: code) {
+            if let rate = try ratesByCurrency[code] ?? rateProvider.rate(for: code, asOf: asOf) {
                 ratesByCurrency[code] = rate
-                return (item, FxConversion.toBaseMinorUnits(item.balanceMinorUnits, rate: rate))
+                return (
+                    item,
+                    try FxConversion.checkedToBaseMinorUnits(item.balanceMinorUnits, rate: rate)
+                )
             }
             fallbackCurrencyCodes.insert(code) // 无快照按 1:1 并披露（§4 口径②）
             return (item, item.balanceMinorUnits)
         }
 
         let countedItems = converted.filter(\.item.account.isIncludedInNetWorth)
-        let totalAssets = countedItems.map(\.baseMinorUnits).filter { $0 > 0 }.reduce(0, +)
-        let totalLiabilities = -countedItems.map(\.baseMinorUnits).filter { $0 < 0 }.reduce(0, +)
+        let totalAssets = try MoneyArithmetic.sum(
+            countedItems.map(\.baseMinorUnits).filter { $0 > 0 }
+        )
+        let totalLiabilities = try MoneyArithmetic.magnitude(
+            MoneyArithmetic.sum(countedItems.map(\.baseMinorUnits).filter { $0 < 0 })
+        )
 
         // 与分组小计同口径（裁决 9 精神）：借入只计负余额欠款（溢缴按 0）、借出只计正余额（透支按 0），
         // 不做净额抵减，避免顶部汇总与分组小计两个数
-        let borrowed = -converted.filter { $0.item.account.kind == .payable }
-            .map(\.baseMinorUnits).filter { $0 < 0 }.reduce(0, +)
-        let lent = converted.filter { $0.item.account.kind == .receivable }
-            .map(\.baseMinorUnits).filter { $0 > 0 }.reduce(0, +)
+        let borrowed = try MoneyArithmetic.magnitude(
+            MoneyArithmetic.sum(
+                converted.filter { $0.item.account.kind == .payable }
+                    .map(\.baseMinorUnits).filter { $0 < 0 }
+            )
+        )
+        let lent = try MoneyArithmetic.sum(
+            converted.filter { $0.item.account.kind == .receivable }
+                .map(\.baseMinorUnits).filter { $0 > 0 }
+        )
 
         let listedItems = converted.filter { !$0.item.account.isArchived }
-        let groups = AccountKind.allCases.compactMap { kind -> AssetsOverview.Group? in
+        let groups = try AccountKind.allCases.compactMap { kind -> AssetsOverview.Group? in
             let groupItems = listedItems.filter { $0.item.account.kind == kind }
             guard !groupItems.isEmpty else { return nil }
             return AssetsOverview.Group(
                 kind: kind,
                 items: groupItems.map(\.item),
-                balanceTotalMinorUnits: groupItems.map(\.baseMinorUnits).filter { $0 > 0 }.reduce(0, +),
-                debtTotalMinorUnits: -groupItems.map(\.baseMinorUnits).filter { $0 < 0 }.reduce(0, +)
+                balanceTotalMinorUnits: try MoneyArithmetic.sum(
+                    groupItems.map(\.baseMinorUnits).filter { $0 > 0 }
+                ),
+                debtTotalMinorUnits: try MoneyArithmetic.magnitude(
+                    MoneyArithmetic.sum(groupItems.map(\.baseMinorUnits).filter { $0 < 0 })
+                )
             )
         }
 

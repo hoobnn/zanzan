@@ -97,7 +97,10 @@ struct TransactionListQueryTests {
 
         let filter = TransactionListFilter(ledgerID: env.ledgerID)
         let results = try env.context.fetch(filter.fetchDescriptor())
-        let months = TransactionListGrouping.monthGroups(of: results)
+        let months = try TransactionListGrouping.monthGroups(
+            of: results,
+            context: env.context
+        )
 
         #expect(months.count == 2)
         #expect(months[0].expenseTotalMinorUnits == 6_000) // 7 月
@@ -170,8 +173,45 @@ struct TransactionListQueryTests {
 
         let filter = TransactionListFilter(ledgerID: env.ledgerID)
         let results = try env.context.fetch(filter.fetchDescriptor())
-        let months = TransactionListGrouping.monthGroups(of: results)
+        let months = try TransactionListGrouping.monthGroups(
+            of: results,
+            context: env.context
+        )
         #expect(months[0].days[0].items.count == 2)
         #expect(months[0].days[0].expenseTotalMinorUnits == 1_000)
+    }
+
+    @Test func 不计统计原单的退款在明细和月统计都为零() throws {
+        let env = try makeEnv()
+        let original = try record(env, amount: "100", day: 5)
+        original.isExcludedFromStats = true
+        let settlement = Transaction(
+            kind: .income,
+            amountMinorUnits: 10_000,
+            occurredAt: Calendar.current.date(
+                from: DateComponents(year: 2026, month: 7, day: 10, hour: 12)
+            )!,
+            ledgerID: env.ledgerID
+        )
+        settlement.settlementKindRawValue = TransactionLinkKind.refund.rawValue
+        env.context.insert(settlement)
+        env.context.insert(TransactionLink(
+            originalTransactionID: original.uuid,
+            settlementTransactionID: settlement.uuid,
+            kind: .refund,
+            amountMinorUnits: 10_000
+        ))
+        try env.context.save()
+
+        let transactions = try TransactionListFilter(ledgerID: env.ledgerID)
+            .fetch(in: env.context)
+        let months = try TransactionListGrouping.monthGroups(
+            of: transactions,
+            context: env.context
+        )
+        let stats = try MonthlyStatsProvider(context: env.context)
+            .stats(ledgerID: env.ledgerID, year: 2026, month: 7)
+        #expect(months[0].expenseTotalMinorUnits == 0)
+        #expect(stats.expenseTotalMinorUnits == 0)
     }
 }

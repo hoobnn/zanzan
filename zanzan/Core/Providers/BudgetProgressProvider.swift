@@ -6,7 +6,15 @@ struct BudgetProgress {
     /// 生效行：优先当月实体行，无则回落模板行（设计文档 5.7）
     let budget: Budget
     let usedMinorUnits: Int
-    var remainingMinorUnits: Int { budget.amountMinorUnits - usedMinorUnits }
+    let remainingMinorUnits: Int
+
+    init(budget: Budget, usedMinorUnits: Int) throws {
+        self.budget = budget
+        self.usedMinorUnits = usedMinorUnits
+        remainingMinorUnits = try MoneyArithmetic.subtract(
+            budget.amountMinorUnits, usedMinorUnits
+        )
+    }
     /// 已用比例（>1 表示超支）；额度非正防御为 0
     var usedFraction: Double {
         budget.amountMinorUnits > 0 ? Double(usedMinorUnits) / Double(budget.amountMinorUnits) : 0
@@ -22,8 +30,8 @@ struct MonthlyBudgetProgress {
 }
 
 /// 预算进度只读投影（设计文档 5.7）：预算金额一律本位币计（§4 折算口径③），
-/// 已用额走 statsExpenseMinorUnits 自动继承口径①折算（外币按自身汇率快照折本位币）。
-/// 总预算已用 = 当月支出合计（statsExpenseMinorUnits 口径，fee 恒为流出一并计入）；
+/// 已用额走预算专用金额口径，并按流水自身汇率快照折本位币。
+/// 总预算已用 = 当月支出合计（fee 恒为流出一并计入）；
 /// 分类预算已用 = 该一级分类含全部子类的支出 rollup（fee 无分类归属，不进分类口径）。
 /// 退款到账按 RefundAdjustmentResolver 的 link 明细冲减，总额与分类同口径；
 /// 原单不计预算的退款不冲减（对称：没计入的不冲）。跨月退款打负属口径自然结果，与月度统计一致。
@@ -59,33 +67,43 @@ struct BudgetProgressProvider {
         let refunds = try RefundAdjustmentResolver.adjustments(in: transactions, context: context)
             .filter { !$0.isOriginalExcludedFromBudget }
 
-        // 总预算：退款到账的 amount 冲减改按上面 link 明细计（总额与分类同口径），
-        // 到账单只保留 statsFee（fee 恒为流出）；其余流水照旧计 statsExpense
-        let totalUsed = transactions.reduce(0) { sum, tx in
-            let isRefundSettlement = tx.kind == .income && tx.settlementKind == .refund
-            return sum + (isRefundSettlement ? tx.statsFeeMinorUnits : tx.statsExpenseMinorUnits)
-        } + refunds.reduce(0) { $0 + $1.amountMinorUnits }
+        // 总预算：退款到账的 amount 冲减按上面 link 明细计（总额与分类同口径），
+        // 到账单只保留 fee（fee 恒为流出）；其余流水走预算专用口径。
+        // isExcludedFromStats 与预算开关彼此独立，绝不能复用 statsExpense/statsFee。
+        let totalUsed = try MoneyArithmetic.add(
+            MoneyArithmetic.sum(transactions.map { try budgetExpenseMinorUnits(of: $0) }),
+            MoneyArithmetic.sum(refunds.map(\.amountMinorUnits))
+        )
 
         var usedByParent: [UUID: Int] = [:]
         for tx in transactions where tx.kind == .expense {
-            // fee 无分类归属，不进分类预算；扣减用折算后 statsFeeMinorUnits 与 statsExpense 同口径，
-            // 差值恰为折算后 amount；isExcludedFromStats 两侧同归零后被 guard 剔除
-            let value = tx.statsExpenseMinorUnits - tx.statsFeeMinorUnits
+            // fee 无分类归属，不进分类预算；分类只累计折算后的支出本金。
+            let value = try budgetBaseMinorUnits(tx.amountMinorUnits, of: tx)
             guard value > 0, let category = tx.category else { continue }
-            usedByParent[category.parentID ?? category.uuid, default: 0] += value
+            let parentID = category.parentID ?? category.uuid
+            usedByParent[parentID] = try MoneyArithmetic.add(
+                usedByParent[parentID, default: 0], value
+            )
         }
         for refund in refunds {
             guard let category = refund.category else { continue } // 原单无分类：只冲总额
-            usedByParent[category.parentID ?? category.uuid, default: 0] += refund.amountMinorUnits
+            let parentID = category.parentID ?? category.uuid
+            usedByParent[parentID] = try MoneyArithmetic.add(
+                usedByParent[parentID, default: 0], refund.amountMinorUnits
+            )
         }
 
         var total: BudgetProgress?
         var categories: [BudgetProgress] = []
         for budget in budgets {
             if let categoryID = budget.categoryID {
-                categories.append(BudgetProgress(budget: budget, usedMinorUnits: usedByParent[categoryID] ?? 0))
+                categories.append(
+                    try BudgetProgress(
+                        budget: budget, usedMinorUnits: usedByParent[categoryID] ?? 0
+                    )
+                )
             } else {
-                total = BudgetProgress(budget: budget, usedMinorUnits: totalUsed)
+                total = try BudgetProgress(budget: budget, usedMinorUnits: totalUsed)
             }
         }
         return MonthlyBudgetProgress(
@@ -95,6 +113,28 @@ struct BudgetProgressProvider {
     }
 
     // MARK: - 私有
+
+    /// 单笔流水对总预算已用额的贡献。只服从预算查询层的 `isExcludedFromBudget`，
+    /// 不读取 `isExcludedFromStats`：两个开关在 schema 中是彼此独立的投影口径。
+    private func budgetExpenseMinorUnits(of transaction: Transaction) throws -> Int {
+        guard let kind = transaction.kind else { return 0 }
+        let fee = try budgetBaseMinorUnits(transaction.feeMinorUnits, of: transaction)
+        switch kind {
+        case .expense:
+            return try MoneyArithmetic.add(
+                budgetBaseMinorUnits(transaction.amountMinorUnits, of: transaction), fee
+            )
+        case .income, .transfer:
+            return fee
+        }
+    }
+
+    /// 预算与统计共用“按流水汇率快照折本位币”这一基础换算，但不共用统计排除开关。
+    private func budgetBaseMinorUnits(
+        _ minorUnits: Int, of transaction: Transaction
+    ) throws -> Int {
+        try transaction.checkedStatsBaseMinorUnits(minorUnits)
+    }
 
     /// 每个预算维度（categoryID，nil = 总预算）取生效行：当月实体行优先，无则回落模板行。
     private func effectiveBudgets(ledgerID: UUID, year: Int, month: Int) throws -> [Budget] {
@@ -109,8 +149,17 @@ struct BudgetProgressProvider {
         var effective: [UUID?: Budget] = [:]
         for row in rows {
             if let existing = effective[row.categoryID] {
-                if existing.periodYear == nil && row.periodYear != nil {
-                    effective[row.categoryID] = row // 实体行覆盖模板行
+                let rowIsMonthly = row.periodYear != nil
+                let existingIsMonthly = existing.periodYear != nil
+                if rowIsMonthly != existingIsMonthly {
+                    if rowIsMonthly {
+                        effective[row.categoryID] = row // 实体行覆盖模板行
+                    }
+                } else if row.updatedAt > existing.updatedAt
+                            || (row.updatedAt == existing.updatedAt
+                                && row.uuid.uuidString < existing.uuid.uuidString) {
+                    // 旁路写入造成重复时仍给出稳定结果；正常写路径会拒绝重复维度。
+                    effective[row.categoryID] = row
                 }
             } else {
                 effective[row.categoryID] = row
@@ -125,7 +174,7 @@ enum BudgetProgressError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidMonth: String(localized: "无效的预算月份")
+        case .invalidMonth: ZanzanLocalization.string( "无效的预算月份")
         }
     }
 }

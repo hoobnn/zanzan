@@ -2,12 +2,8 @@ import Foundation
 
 /// 分期/贷款计划表单草稿——入口校验 + 归一化（设计文档 5.9 命令层不变量的 Draft 侧）。
 ///
-/// 可执行性硬约束：期供流水 amount = 该期本金且恒为正（5.4），故**每期本金至少 1 分**——
-/// 由「本金 ≥ 期数」与 custom 逐期校验共同保证；除不尽尾差归末期由 Service 生成期表时执行。
-///
-/// interestOnly（先息后本）按 5.10 前 n−1 期本金为 0，与 5.4「amount 恒正」+
-/// TransactionService 转账入口（amount > 0）冲突——零本金期无法生成合法期供流水，
-/// 本切片在入口处阻断（fail fast），待流水层支持纯利息期后放开。
+/// 普通方式每期本金至少 1 个最小货币单位；先息后本允许前期本金为 0，
+/// 但对应期必须有正息费，且仅能经分期服务生成。
 struct InstallmentPlanDraft {
     /// custom 方式的逐期录入行
     struct CustomPeriodInput: Equatable {
@@ -30,6 +26,13 @@ struct InstallmentPlanDraft {
     var note: String = ""
     /// flatFee 方式的每期固定手续费（分）；仅 flatFee 必填
     var flatFeePerPeriodMinorUnits: Int? = nil
+    /// 固定息费总额（新入口）；与旧的每期固定手续费二选一，新值优先。
+    var totalChargeMinorUnits: Int? = nil
+    var chargeCollectionKind: ChargeCollectionKind = .perPeriod
+    var principalRoundingKind: InstallmentRoundingKind = .downToMinorUnit
+    var principalRemainderKind: InstallmentRemainderKind = .lastPeriod
+    var chargeRoundingKind: InstallmentRoundingKind = .downToMinorUnit
+    var chargeRemainderKind: InstallmentRemainderKind = .lastPeriod
     /// custom 方式的逐期本息；行数必须等于 totalPeriods 且本金合计等于总本金
     var customPeriods: [CustomPeriodInput] = []
 
@@ -46,7 +49,12 @@ struct InstallmentPlanDraft {
         let isAutoSettle: Bool
         let note: String
         /// 仅 flatFee 非 nil
-        let flatFeePerPeriodMinorUnits: Int?
+        let totalChargeMinorUnits: Int?
+        let chargeCollectionKind: ChargeCollectionKind
+        let principalRoundingKind: InstallmentRoundingKind
+        let principalRemainderKind: InstallmentRemainderKind
+        let chargeRoundingKind: InstallmentRoundingKind
+        let chargeRemainderKind: InstallmentRemainderKind
         /// 仅 custom 非空
         let customPeriods: [CustomPeriodInput]
     }
@@ -58,6 +66,9 @@ struct InstallmentPlanDraft {
         guard let accountID else { throw InstallmentPlanDraftError.missingAccount }
         guard let ledgerID else { throw InstallmentPlanDraftError.missingLedger }
         guard principalMinorUnits > 0 else { throw InstallmentPlanDraftError.nonPositivePrincipal }
+        guard principalMinorUnits <= MoneyAmount.maxAbsoluteMinorUnits else {
+            throw InstallmentPlanDraftError.amountTooHigh
+        }
         guard totalPeriods >= 1 else { throw InstallmentPlanDraftError.invalidTotalPeriods }
         guard totalPeriods <= DraftLimits.maxInstallmentPeriods else {
             throw InstallmentPlanDraftError.tooManyPeriods
@@ -67,40 +78,67 @@ struct InstallmentPlanDraft {
         }
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard note.count <= DraftLimits.maxNoteLength else { throw InstallmentPlanDraftError.noteTooLong }
-        // 每期本金至少 1 分（期供流水 amount 恒正的可执行性约束）
-        guard principalMinorUnits >= totalPeriods else { throw InstallmentPlanDraftError.principalLessThanPeriods }
-
+        guard !isAutoSettle else {
+            throw InstallmentPlanDraftError.automaticSettlementUnsupported
+        }
         // 利息口径按方式归一化：无关字段防御性清空（同 TransactionDraft 非转账 fee 归零的先例）
         var rate: Int? = nil
-        var flatFee: Int? = nil
+        var totalCharge: Int? = nil
         var custom: [CustomPeriodInput] = []
         switch amortizationKind {
-        case .annuity, .linearPrincipal:
+        case .annuity, .linearPrincipal, .interestOnly:
             guard let annualRateBps else { throw InstallmentPlanDraftError.missingAnnualRate }
             guard annualRateBps >= 0 else { throw InstallmentPlanDraftError.negativeAnnualRate }
             guard annualRateBps <= DraftLimits.maxAnnualRateBps else {
                 throw InstallmentPlanDraftError.annualRateTooHigh
             }
+            if amortizationKind == .interestOnly,
+               totalPeriods > 1,
+               annualRateBps == 0 {
+                throw InstallmentPlanDraftError.zeroRateMultiPeriodInterestOnly
+            }
             rate = annualRateBps
-        case .interestOnly:
-            // 见类型注释：零本金期与 amount 恒正冲突，暂不支持
-            throw InstallmentPlanDraftError.interestOnlyUnsupported
         case .flatFee:
-            guard let flatFeePerPeriodMinorUnits else { throw InstallmentPlanDraftError.missingFlatFee }
-            guard flatFeePerPeriodMinorUnits >= 0 else { throw InstallmentPlanDraftError.negativeFlatFee }
-            flatFee = flatFeePerPeriodMinorUnits
+            if let totalChargeMinorUnits {
+                guard totalChargeMinorUnits >= 0 else { throw InstallmentPlanDraftError.negativeFlatFee }
+                totalCharge = totalChargeMinorUnits
+            } else {
+                guard let flatFeePerPeriodMinorUnits else {
+                    throw InstallmentPlanDraftError.missingFlatFee
+                }
+                guard flatFeePerPeriodMinorUnits >= 0 else {
+                    throw InstallmentPlanDraftError.negativeFlatFee
+                }
+                let (legacyTotal, overflow) = flatFeePerPeriodMinorUnits
+                    .multipliedReportingOverflow(by: totalPeriods)
+                guard !overflow else { throw InstallmentPlanDraftError.amountTooHigh }
+                totalCharge = legacyTotal
+            }
+            guard totalCharge! <= MoneyAmount.maxAbsoluteMinorUnits else {
+                throw InstallmentPlanDraftError.amountTooHigh
+            }
         case .custom:
             guard customPeriods.count == totalPeriods else {
                 throw InstallmentPlanDraftError.customPeriodCountMismatch
             }
-            guard customPeriods.allSatisfy({ $0.principalMinorUnits >= 1 && $0.interestMinorUnits >= 0 }) else {
+            guard customPeriods.allSatisfy({
+                $0.principalMinorUnits >= 1
+                    && $0.principalMinorUnits <= MoneyAmount.maxAbsoluteMinorUnits
+                    && $0.interestMinorUnits >= 0
+                    && $0.interestMinorUnits <= MoneyAmount.maxAbsoluteMinorUnits
+            }) else {
                 throw InstallmentPlanDraftError.invalidCustomPeriod
             }
-            let principalSum = customPeriods.reduce(0) { $0 + $1.principalMinorUnits }
+            let principalSum = try checkedSum(customPeriods.map(\.principalMinorUnits))
             guard principalSum == principalMinorUnits else {
                 throw InstallmentPlanDraftError.customPrincipalSumMismatch
             }
             custom = customPeriods
+        }
+        if amortizationKind != .interestOnly {
+            guard principalMinorUnits >= totalPeriods else {
+                throw InstallmentPlanDraftError.principalLessThanPeriods
+            }
         }
 
         return Validated(
@@ -115,9 +153,22 @@ struct InstallmentPlanDraft {
             firstDueAt: firstDueAt,
             isAutoSettle: isAutoSettle,
             note: note,
-            flatFeePerPeriodMinorUnits: flatFee,
+            totalChargeMinorUnits: totalCharge,
+            chargeCollectionKind: amortizationKind == .flatFee ? chargeCollectionKind : .perPeriod,
+            principalRoundingKind: amortizationKind == .flatFee ? principalRoundingKind : .downToMinorUnit,
+            principalRemainderKind: amortizationKind == .flatFee ? principalRemainderKind : .lastPeriod,
+            chargeRoundingKind: amortizationKind == .flatFee ? chargeRoundingKind : .downToMinorUnit,
+            chargeRemainderKind: amortizationKind == .flatFee ? chargeRemainderKind : .lastPeriod,
             customPeriods: custom
         )
+    }
+
+    private func checkedSum(_ values: [Int]) throws -> Int {
+        try values.reduce(0) { partial, value in
+            let (sum, overflow) = partial.addingReportingOverflow(value)
+            guard !overflow else { throw InstallmentPlanDraftError.amountTooHigh }
+            return sum
+        }
     }
 }
 
@@ -135,7 +186,9 @@ enum InstallmentPlanDraftError: LocalizedError, Equatable {
     case missingAnnualRate
     case negativeAnnualRate
     case annualRateTooHigh
-    case interestOnlyUnsupported
+    case zeroRateMultiPeriodInterestOnly
+    case automaticSettlementUnsupported
+    case amountTooHigh
     case missingFlatFee
     case negativeFlatFee
     case customPeriodCountMismatch
@@ -144,25 +197,118 @@ enum InstallmentPlanDraftError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: String(localized: "计划名称不能为空")
-        case .nameTooLong: String(localized: "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
-        case .noteTooLong: String(localized: "备注不能超过 \(DraftLimits.maxNoteLength) 字")
-        case .missingAccount: String(localized: "请选择债务账户")
-        case .missingLedger: String(localized: "请选择账本")
-        case .nonPositivePrincipal: String(localized: "本金总额必须大于零")
-        case .invalidTotalPeriods: String(localized: "总期数至少为 1 期")
-        case .tooManyPeriods: String(localized: "总期数不能超过 \(DraftLimits.maxInstallmentPeriods) 期")
-        case .firstDueAtOutOfRange: String(localized: "首期还款日超出可记账范围")
-        case .principalLessThanPeriods: String(localized: "本金总额不能少于期数（每期本金至少 1 分）")
-        case .missingAnnualRate: String(localized: "该还款方式需要填写年利率")
-        case .negativeAnnualRate: String(localized: "年利率不能为负")
-        case .annualRateTooHigh: String(localized: "年利率超出可接受上限")
-        case .interestOnlyUnsupported: String(localized: "先息后本暂不支持")
-        case .missingFlatFee: String(localized: "固定手续费方式需要填写每期手续费")
-        case .negativeFlatFee: String(localized: "每期手续费不能为负")
-        case .customPeriodCountMismatch: String(localized: "自定义期数行数须等于总期数")
-        case .invalidCustomPeriod: String(localized: "自定义期数每期本金至少 1 分、利息不能为负")
-        case .customPrincipalSumMismatch: String(localized: "自定义期数本金合计须等于本金总额")
+        case .emptyName: ZanzanLocalization.string( "计划名称不能为空")
+        case .nameTooLong: ZanzanLocalization.string( "计划名称不能超过 \(DraftLimits.maxNameLength) 字")
+        case .noteTooLong: ZanzanLocalization.string( "备注不能超过 \(DraftLimits.maxNoteLength) 字")
+        case .missingAccount: ZanzanLocalization.string( "请选择债务账户")
+        case .missingLedger: ZanzanLocalization.string( "请选择账本")
+        case .nonPositivePrincipal: ZanzanLocalization.string( "本金总额必须大于零")
+        case .invalidTotalPeriods: ZanzanLocalization.string( "总期数至少为 1 期")
+        case .tooManyPeriods: ZanzanLocalization.string( "总期数不能超过 \(DraftLimits.maxInstallmentPeriods) 期")
+        case .firstDueAtOutOfRange: ZanzanLocalization.string( "首期还款日超出可记账范围")
+        case .principalLessThanPeriods: ZanzanLocalization.string( "本金总额不能少于期数（每期本金至少 1 分）")
+        case .missingAnnualRate: ZanzanLocalization.string( "该还款方式需要填写年利率")
+        case .negativeAnnualRate: ZanzanLocalization.string( "年利率不能为负")
+        case .annualRateTooHigh: ZanzanLocalization.string( "年利率超出可接受上限")
+        case .zeroRateMultiPeriodInterestOnly: ZanzanLocalization.string( "多期先息后本的年利率必须大于 0")
+        case .automaticSettlementUnsupported: ZanzanLocalization.string( "当前版本尚不支持自动结算，请关闭后重试")
+        case .amountTooHigh: ZanzanLocalization.string( "金额超出可支持范围")
+        case .missingFlatFee: ZanzanLocalization.string( "固定手续费方式需要填写每期手续费")
+        case .negativeFlatFee: ZanzanLocalization.string( "每期手续费不能为负")
+        case .customPeriodCountMismatch: ZanzanLocalization.string( "自定义期数行数须等于总期数")
+        case .invalidCustomPeriod: ZanzanLocalization.string( "自定义期数每期本金至少 1 分、利息不能为负")
+        case .customPrincipalSumMismatch: ZanzanLocalization.string( "自定义期数本金合计须等于本金总额")
+        }
+    }
+}
+
+/// 银行预设只填充计算规则，不保存银行名称，也不提供费率或息费金额。
+enum InstallmentCalculationPreset: String, CaseIterable, Identifiable {
+    case standard
+    case icbcPerPeriod
+    case icbcUpfront
+    case abc
+
+    struct Rules: Equatable {
+        let chargeCollectionKind: ChargeCollectionKind
+        let principalRoundingKind: InstallmentRoundingKind
+        let principalRemainderKind: InstallmentRemainderKind
+        let chargeRoundingKind: InstallmentRoundingKind
+        let chargeRemainderKind: InstallmentRemainderKind
+    }
+
+    var id: Self { self }
+
+    var title: String.LocalizationValue {
+        switch self {
+        case .standard: "通用兼容"
+        case .icbcPerPeriod: "工行信用卡现金分期（分期收取）"
+        case .icbcUpfront: "工行信用卡现金分期（首期一次收取）"
+        case .abc: "农行卡户分期"
+        }
+    }
+
+    /// 只读产品范围说明；仅用于表单辅助，不进入 InstallmentPlan。
+    var productScopeNote: String.LocalizationValue {
+        switch self {
+        case .standard:
+            "适用范围：通用兼容模板，不对应任何银行产品。"
+        case .icbcPerPeriod, .icbcUpfront:
+            "适用范围：工行信用卡现金分期；收取方式以办理页面或合同为准。"
+        case .abc:
+            "适用范围：农行信用卡卡户分期（账单、消费、总账分期）。"
+        }
+    }
+
+    /// 官网一手规则来源；与产品范围同为只读表单元数据，不持久化。
+    var sourceURL: URL? {
+        switch self {
+        case .standard:
+            nil
+        case .icbcPerPeriod, .icbcUpfront:
+            URL(string: "https://media.icbc.com.cn/agreement/1200289008933597184.html")
+        case .abc:
+            URL(
+                string: "https://www.abchina.com/cn/CreditCard/AboutUs/Update/202510/"
+                    + "W020251029598620797047.pdf"
+            )
+        }
+    }
+
+    var rules: Rules {
+        switch self {
+        case .standard:
+            Rules(
+                chargeCollectionKind: .perPeriod,
+                principalRoundingKind: .downToMinorUnit,
+                principalRemainderKind: .lastPeriod,
+                chargeRoundingKind: .downToMinorUnit,
+                chargeRemainderKind: .lastPeriod
+            )
+        case .icbcPerPeriod:
+            Rules(
+                chargeCollectionKind: .perPeriod,
+                principalRoundingKind: .downToMinorUnit,
+                principalRemainderKind: .firstPeriod,
+                chargeRoundingKind: .downToMinorUnit,
+                chargeRemainderKind: .firstPeriod
+            )
+        case .icbcUpfront:
+            Rules(
+                chargeCollectionKind: .upfrontFirstPeriod,
+                principalRoundingKind: .downToMinorUnit,
+                principalRemainderKind: .firstPeriod,
+                chargeRoundingKind: .downToMinorUnit,
+                chargeRemainderKind: .firstPeriod
+            )
+        case .abc:
+            Rules(
+                chargeCollectionKind: .perPeriod,
+                principalRoundingKind: .nearestMajorUnit,
+                principalRemainderKind: .lastPeriod,
+                chargeRoundingKind: .nearestMinorUnit,
+                chargeRemainderKind: .lastPeriod
+            )
         }
     }
 }

@@ -13,9 +13,29 @@ struct TransactionService {
         ledgerID: UUID,
         source: (kind: TransactionSourceKind, id: UUID)? = nil
     ) throws -> Transaction {
-        let v = try draft.validated()
-        try ensureActiveLedger(ledgerID)
-        let resolved = try resolve(v, previous: nil)
+        do {
+            let tx = try stageTransaction(draft, ledgerID: ledgerID, source: source)
+            try context.zanzanSave()
+            return tx
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// 组合命令专用：完成全部校验、插入与快照失效，但不保存。
+    /// 调用方必须在同一同步调用栈内补齐关联状态后统一 `context.zanzanSave()`，
+    /// 用于保证“流水 + 业务状态机”只有一个提交边界。
+    @discardableResult
+    func stageTransaction(
+        _ draft: TransactionDraft,
+        ledgerID: UUID,
+        source: (kind: TransactionSourceKind, id: UUID)? = nil
+    ) throws -> Transaction {
+        let v = try draft.validated(
+            allowZeroAmountForInstallmentCharge: source?.kind == .installment
+        )
+        let resolved = try resolve(v, ledgerID: ledgerID, previous: nil)
         let tx = Transaction(kind: v.kind, amountMinorUnits: v.amountMinorUnits, occurredAt: v.occurredAt, ledgerID: ledgerID)
         assign(v, resolved, to: tx)
         // 来源包在首个 save 前写入：崩溃重放的去重承诺（周期按 sourceID 去重、
@@ -26,11 +46,22 @@ struct TransactionService {
         }
         context.insert(tx)
         try invalidateSnapshots(accounts: [resolved.account.uuid, resolved.targetAccount?.uuid], onOrAfter: v.occurredAt)
-        try context.save()
         return tx
     }
 
     func updateTransaction(uuid: UUID, draft: TransactionDraft) throws {
+        do {
+            _ = try stageUpdateTransaction(uuid: uuid, draft: draft)
+            try context.zanzanSave()
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// 组合命令专用：完成编辑校验、字段更新、报销状态重算与快照失效，但不保存。
+    @discardableResult
+    func stageUpdateTransaction(uuid: UUID, draft: TransactionDraft) throws -> Transaction {
         let tx = try fetchTransaction(uuid, includeDeleted: false)
         try ensureNotInstallmentManaged(tx)
         try ensureNotSettlement(tx)
@@ -44,7 +75,13 @@ struct TransactionService {
             throw TransactionServiceError.amountBelowAllocations
         }
         // 先全量解析校验、再统一赋值——避免抛错前污染上下文（同 calibrateBalance 纪律）
-        let resolved = try resolve(v, previous: tx)
+        guard let ledgerID = tx.ledgerID else {
+            throw TransactionServiceError.ledgerNotFound
+        }
+        let resolved = try resolve(v, ledgerID: ledgerID, previous: tx)
+        if resolved.account.currencyCode != tx.currencyCode {
+            try ensureNoActiveReimbursementLinks(tx)
+        }
         let previousAccounts = [tx.account?.uuid, tx.targetAccount?.uuid]
         let previousOccurredAt = tx.occurredAt
         tx.amountMinorUnits = v.amountMinorUnits
@@ -57,7 +94,7 @@ struct TransactionService {
             accounts: previousAccounts + [resolved.account.uuid, resolved.targetAccount?.uuid],
             onOrAfter: min(previousOccurredAt, v.occurredAt)
         )
-        try context.save()
+        return tx
     }
 
     func softDeleteTransaction(uuid: UUID) throws {
@@ -68,19 +105,40 @@ struct TransactionService {
         tx.isSoftDeleted = true
         tx.updatedAt = .now
         try invalidateSnapshots(accounts: [tx.account?.uuid, tx.targetAccount?.uuid], onOrAfter: tx.occurredAt)
-        try context.save()
+        try context.zanzanSave()
     }
 
     func undoSoftDeleteTransaction(uuid: UUID) throws {
-        let tx = try fetchTransaction(uuid, includeDeleted: true)
+        do {
+            let tx = try fetchTransaction(uuid, includeDeleted: true)
+            guard tx.isSoftDeleted else { return }
+            try ensureTransactionCanBeRestored(tx)
+            tx.isSoftDeleted = false
+            tx.updatedAt = .now
+            try invalidateSnapshots(
+                accounts: [tx.account?.uuid, tx.targetAccount?.uuid],
+                onOrAfter: tx.occurredAt
+            )
+            try context.zanzanSave()
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// 批量恢复入口复用同一套状态机与引用守卫；只校验，不改模型。
+    func ensureTransactionCanBeRestored(
+        _ tx: Transaction,
+        allowingSoftDeletedImportBatch allowedBatchUUID: UUID? = nil
+    ) throws {
+        guard tx.sourceKind != nil else {
+            throw TransactionServiceError.unsupportedSourceKind
+        }
         try ensureNotInstallmentManaged(tx)
         // 到账单恢复须连带恢复其分摊关联行，正确路径是 ReimbursementService.restoreSettlement
         try ensureNotSettlement(tx)
+        try ensureImportBatchActiveIfNeeded(tx, allowing: allowedBatchUUID)
         try ensureReferencesActive(tx)
-        tx.isSoftDeleted = false
-        tx.updatedAt = .now
-        try invalidateSnapshots(accounts: [tx.account?.uuid, tx.targetAccount?.uuid], onOrAfter: tx.occurredAt)
-        try context.save()
     }
 
     /// 期供流水的生命周期与期数表状态强绑定，通用入口删/改/恢复会击穿分期状态机
@@ -101,7 +159,22 @@ struct TransactionService {
         }
     }
 
-    /// 原单有活跃分摊关联时禁止删除（§5.5）：删了原单，关联行与到账单的分摊语义即悬空。
+    private func ensureImportBatchActiveIfNeeded(
+        _ tx: Transaction,
+        allowing allowedBatchUUID: UUID?
+    ) throws {
+        guard tx.sourceKind == .csvImport else { return }
+        guard let sourceID = tx.sourceID else {
+            throw TransactionServiceError.managedByImportBatch
+        }
+        if sourceID == allowedBatchUUID { return }
+        let count = try context.fetchCount(FetchDescriptor<ImportBatch>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == sourceID }
+        ))
+        guard count > 0 else { throw TransactionServiceError.managedByImportBatch }
+    }
+
+    /// 原单有活跃分摊关联时禁止删除或改币种（§5.5）：否则关联行与到账单的分摊语义会悬空或漂移。
     private func ensureNoActiveReimbursementLinks(_ tx: Transaction) throws {
         let originalID = tx.uuid
         let count = try context.fetchCount(FetchDescriptor<TransactionLink>(
@@ -113,15 +186,27 @@ struct TransactionService {
     /// 恢复前校验引用均活跃（对称于删除侧阻断）：否则活跃流水挂在已删账户/账本/分类上，
     /// 净资产不算它、月度统计算它，口径分叉。
     private func ensureReferencesActive(_ tx: Transaction) throws {
-        // ponytail: ledgerID/account 为 nil 属历史坏数据，不因此卡死恢复，只校验存在的引用
-        if let ledgerID = tx.ledgerID {
-            do { try ensureActiveLedger(ledgerID) } catch {
+        guard let ledgerID = tx.ledgerID, let account = tx.account else {
+            throw TransactionServiceError.restoreReferenceDeleted
+        }
+        do {
+            try ensureLedgerUsableForRecord(ledgerID)
+            try ensureAccountUsableForRecord(account)
+            switch tx.kind {
+            case .expense, .income:
+                guard let category = tx.category else {
+                    throw TransactionServiceError.restoreReferenceDeleted
+                }
+                try ensureCategoryUsableForRecord(category, ledgerID: ledgerID)
+            case .transfer:
+                guard let targetAccount = tx.targetAccount else {
+                    throw TransactionServiceError.restoreReferenceDeleted
+                }
+                try ensureAccountUsableForRecord(targetAccount)
+            case nil:
                 throw TransactionServiceError.restoreReferenceDeleted
             }
-        }
-        guard tx.account?.isSoftDeleted != true,
-              tx.targetAccount?.isSoftDeleted != true,
-              tx.category?.isSoftDeleted != true else {
+        } catch {
             throw TransactionServiceError.restoreReferenceDeleted
         }
     }
@@ -144,14 +229,14 @@ struct TransactionService {
         let targetAmountMinorUnits: Int?
     }
 
-    private func resolve(_ v: TransactionDraft.Validated, previous: Transaction?) throws -> Resolved {
+    private func resolve(
+        _ v: TransactionDraft.Validated,
+        ledgerID: UUID,
+        previous: Transaction?
+    ) throws -> Resolved {
+        try ensureLedgerUsableForRecord(ledgerID)
         let account = try fetchActiveAccount(v.accountUUID)
-        // §4 归档=新引用禁止：新记账或编辑换到的引用已归档一律阻断；
-        // 编辑未换引用放行——修正错字不该被既有引用的归档状态卡住。
-        // previous == nil（新记账）时条件恒真，一条守卫覆盖两条路径。
-        if account.isArchived, previous?.account?.uuid != account.uuid {
-            throw TransactionServiceError.accountArchived
-        }
+        try ensureAccountUsableForRecord(account)
         var category: Category?
         var targetAccount: Account?
         var targetAmount: Int?
@@ -159,15 +244,11 @@ struct TransactionService {
         case .expense, .income:
             let found = try fetchActiveCategory(v.categoryUUID!)
             guard found.kind == v.kind else { throw TransactionServiceError.categoryKindMismatch }
-            if found.isArchived, previous?.category?.uuid != found.uuid {
-                throw TransactionServiceError.categoryArchived
-            }
+            try ensureCategoryUsableForRecord(found, ledgerID: ledgerID)
             category = found
         case .transfer:
             let target = try fetchActiveAccount(v.targetAccountUUID!)
-            if target.isArchived, previous?.targetAccount?.uuid != target.uuid {
-                throw TransactionServiceError.accountArchived
-            }
+            try ensureAccountUsableForRecord(target)
             targetAccount = target
             if target.currencyCode == account.currencyCode {
                 targetAmount = nil // 同币种转账强制归 nil（§5.4）
@@ -184,7 +265,10 @@ struct TransactionService {
             }
         }
         let fxRate = try resolvedFxRate(
-            currencyCode: account.currencyCode, draftRate: v.fxRateToBase, previous: previous
+            currencyCode: account.currencyCode,
+            draftRate: v.fxRateToBase,
+            occurredAt: v.occurredAt,
+            previous: previous
         )
         return Resolved(
             account: account, category: category, targetAccount: targetAccount,
@@ -201,28 +285,75 @@ struct TransactionService {
         tx.category = r.category
         tx.targetAccount = r.targetAccount
         tx.targetAmountMinorUnits = r.targetAmountMinorUnits
+        tx.locationName = v.locationName
+        tx.locationLatitude = v.locationLatitude
+        tx.locationLongitude = v.locationLongitude
+        tx.isExcludedFromBudget = v.isExcludedFromBudget
+        tx.isExcludedFromStats = v.isExcludedFromStats
     }
 
     /// §5.4 汇率必填规则：本位币恒 nil（草稿给了也归 nil）；外币强制非空——
     /// 草稿显式给则用之；编辑未换币种则保留流水既有快照（§4 口径①历史永固，
     /// 禁止被最近快照静默改写）；新记且无快照可预填时抛错。
-    private func resolvedFxRate(currencyCode: String, draftRate: Decimal?, previous: Transaction?) throws -> Decimal? {
+    private func resolvedFxRate(
+        currencyCode: String,
+        draftRate: Decimal?,
+        occurredAt: Date,
+        previous: Transaction?
+    ) throws -> Decimal? {
         guard currencyCode != FxConversion.baseCurrencyCode else { return nil }
         if let draftRate { return draftRate }
         if let previous, previous.currencyCode == currencyCode, let kept = previous.fxRateToBase {
             return kept
         }
-        guard let snapshot = try FxRateProvider(context: context).rate(for: currencyCode) else {
+        guard let snapshot = try FxRateProvider(context: context)
+            .rate(for: currencyCode, asOf: occurredAt) else {
             throw TransactionServiceError.missingFxRate
         }
         return snapshot
     }
 
-    private func ensureActiveLedger(_ uuid: UUID) throws {
-        let count = try context.fetchCount(
-            FetchDescriptor<Ledger>(predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid })
+    private func ensureLedgerUsableForRecord(_ uuid: UUID) throws {
+        let descriptor = FetchDescriptor<Ledger>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.uuid == uuid }
         )
-        guard count > 0 else { throw TransactionServiceError.ledgerNotFound }
+        guard let ledger = try context.fetch(descriptor).first else {
+            throw TransactionServiceError.ledgerNotFound
+        }
+        guard !ledger.isArchived else { throw TransactionServiceError.ledgerArchived }
+    }
+
+    private func ensureAccountUsableForRecord(_ account: Account) throws {
+        guard !account.isSoftDeleted else { throw TransactionServiceError.accountNotFound }
+        guard !account.isArchived else { throw TransactionServiceError.accountArchived }
+        guard account.isSelectableForRecord else {
+            throw TransactionServiceError.accountNotSelectable
+        }
+    }
+
+    /// 子分类自身可用仍不够；任一祖先归档都会让整条分类路径不可选。
+    private func ensureCategoryUsableForRecord(_ category: Category, ledgerID: UUID) throws {
+        guard category.ledgerID == nil || category.ledgerID == ledgerID else {
+            throw TransactionServiceError.categoryLedgerMismatch
+        }
+        var current: Category? = category
+        var visited: Set<UUID> = []
+        while let node = current {
+            guard !node.isSoftDeleted else {
+                throw TransactionServiceError.categoryNotFound
+            }
+            guard visited.insert(node.uuid).inserted else {
+                throw TransactionServiceError.categoryNotFound
+            }
+            guard !node.isArchived else {
+                throw TransactionServiceError.categoryArchived
+            }
+            guard node.ledgerID == nil || node.ledgerID == ledgerID else {
+                throw TransactionServiceError.categoryLedgerMismatch
+            }
+            guard let parentID = node.parentID else { return }
+            current = try fetchActiveCategory(parentID)
+        }
     }
 
     private func fetchActiveAccount(_ uuid: UUID) throws -> Account {
@@ -258,15 +389,20 @@ struct TransactionService {
 
 enum TransactionServiceError: LocalizedError {
     case ledgerNotFound
+    case ledgerArchived
     case accountNotFound
     case accountArchived
+    case accountNotSelectable
     case categoryNotFound
     case categoryArchived
     case transactionNotFound
     case categoryKindMismatch
+    case categoryLedgerMismatch
     case kindImmutable
     case managedByInstallmentPlan
     case managedByReimbursement
+    case managedByImportBatch
+    case unsupportedSourceKind
     case hasReimbursementLinks
     case amountBelowAllocations
     case restoreReferenceDeleted
@@ -275,21 +411,27 @@ enum TransactionServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .ledgerNotFound: String(localized: "账本不存在或已删除")
-        case .accountNotFound: String(localized: "账户不存在或已删除")
-        case .accountArchived: String(localized: "账户已归档，请先取消归档再使用")
-        case .categoryNotFound: String(localized: "分类不存在或已删除")
-        case .categoryArchived: String(localized: "分类已归档，请先取消归档再使用")
-        case .transactionNotFound: String(localized: "流水不存在")
-        case .categoryKindMismatch: String(localized: "分类方向与流水类型不一致")
-        case .kindImmutable: String(localized: "流水类型不可修改，请删除后重新记一笔")
-        case .managedByInstallmentPlan: String(localized: "分期还款流水请在分期计划中操作")
-        case .managedByReimbursement: String(localized: "报销/退款到账单请在报销管理中操作")
-        case .hasReimbursementLinks: String(localized: "该流水已有报销/退款到账记录，请先解除关联")
-        case .amountBelowAllocations: String(localized: "金额不能低于已报销/退款的分摊合计，请先调整分摊")
-        case .restoreReferenceDeleted: String(localized: "流水引用的账本、账户或分类已删除，请先恢复它们")
-        case .missingFxRate: String(localized: "外币流水需填写对人民币的汇率")
-        case .missingTargetAmount: String(localized: "跨币种转账需填写到账金额")
+        case .ledgerNotFound: ZanzanLocalization.string( "账本不存在或已删除")
+        case .ledgerArchived: ZanzanLocalization.string( "账本已归档，请先取消归档再使用")
+        case .accountNotFound: ZanzanLocalization.string( "账户不存在或已删除")
+        case .accountArchived: ZanzanLocalization.string( "账户已归档，请先取消归档再使用")
+        case .accountNotSelectable: ZanzanLocalization.string( "账户当前不可用于记账，请在账户设置中启用后再使用")
+        case .categoryNotFound: ZanzanLocalization.string( "分类不存在或已删除")
+        case .categoryArchived: ZanzanLocalization.string( "分类已归档，请先取消归档再使用")
+        case .transactionNotFound: ZanzanLocalization.string( "流水不存在")
+        case .categoryKindMismatch: ZanzanLocalization.string( "分类方向与流水类型不一致")
+        case .categoryLedgerMismatch: ZanzanLocalization.string( "只能使用全局分类或本账本的分类")
+        case .kindImmutable: ZanzanLocalization.string( "流水类型不可修改，请删除后重新记一笔")
+        case .managedByInstallmentPlan: ZanzanLocalization.string( "分期还款流水请在分期计划中操作")
+        case .managedByReimbursement: ZanzanLocalization.string( "报销/退款到账单请在报销管理中操作")
+        case .managedByImportBatch: ZanzanLocalization.string( "该流水属于已撤销的导入批次，请先恢复批次")
+        case .unsupportedSourceKind:
+            ZanzanLocalization.string( "该流水由更高版本创建，请升级 App 后恢复")
+        case .hasReimbursementLinks: ZanzanLocalization.string( "该流水已有报销/退款到账记录，请先解除关联")
+        case .amountBelowAllocations: ZanzanLocalization.string( "金额不能低于已报销/退款的分摊合计，请先调整分摊")
+        case .restoreReferenceDeleted: ZanzanLocalization.string( "流水引用的账本、账户或分类已删除，请先恢复它们")
+        case .missingFxRate: ZanzanLocalization.string( "外币流水需填写对人民币的汇率")
+        case .missingTargetAmount: ZanzanLocalization.string( "跨币种转账需填写到账金额")
         }
     }
 }

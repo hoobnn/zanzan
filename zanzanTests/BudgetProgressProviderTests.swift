@@ -9,6 +9,7 @@ struct BudgetProgressProviderTests {
         let context: ModelContext
         let ledgerID: UUID
         let accountUUID: UUID
+        let targetAccountUUID: UUID
     }
 
     private func makeEnv() throws -> Env {
@@ -17,7 +18,15 @@ struct BudgetProgressProviderTests {
         var accountDraft = AccountDraft()
         accountDraft.name = "现金"
         let account = try AccountService(context: context).createAccount(accountDraft)
-        return Env(context: context, ledgerID: ledger.uuid, accountUUID: account.uuid)
+        var targetDraft = AccountDraft()
+        targetDraft.name = "储蓄卡"
+        let targetAccount = try AccountService(context: context).createAccount(targetDraft)
+        return Env(
+            context: context,
+            ledgerID: ledger.uuid,
+            accountUUID: account.uuid,
+            targetAccountUUID: targetAccount.uuid
+        )
     }
 
     private func makeCategory(
@@ -58,6 +67,23 @@ struct BudgetProgressProviderTests {
     private func progress(_ env: Env) throws -> MonthlyBudgetProgress {
         try BudgetProgressProvider(context: env.context)
             .progress(ledgerID: env.ledgerID, year: 2026, month: 7)
+    }
+
+    @discardableResult
+    private func recordTransfer(
+        _ env: Env, amount: String = "10", fee: String, day: Int
+    ) throws -> Transaction {
+        var draft = TransactionDraft()
+        draft.kind = .transfer
+        draft.amountString = amount
+        draft.feeString = fee
+        draft.accountUUID = env.accountUUID
+        draft.targetAccountUUID = env.targetAccountUUID
+        draft.occurredAt = Calendar.current.date(
+            from: DateComponents(year: 2026, month: 7, day: day)
+        )!
+        return try TransactionService(context: env.context)
+            .recordTransaction(draft, ledgerID: env.ledgerID)
     }
 
     @Test func 总预算已用等于当月支出合计() throws {
@@ -106,6 +132,54 @@ struct BudgetProgressProviderTests {
         #expect(result.categories.first!.usedMinorUnits == 3_000)
     }
 
+    @Test func 支出预算开关与统计开关四组合彼此独立() throws {
+        let env = try makeEnv()
+        let food = try makeCategory(env, name: "餐饮")
+        try makeBudget(env, amount: 100_000)
+        try makeBudget(env, categoryID: food.uuid, amount: 100_000)
+
+        let combinations = [
+            (excludedFromBudget: false, excludedFromStats: false),
+            (excludedFromBudget: false, excludedFromStats: true),
+            (excludedFromBudget: true, excludedFromStats: false),
+            (excludedFromBudget: true, excludedFromStats: true),
+        ]
+        for (index, flags) in combinations.enumerated() {
+            let tx = try record(
+                env, amount: "10", categoryUUID: food.uuid, day: index + 1
+            )
+            tx.isExcludedFromBudget = flags.excludedFromBudget
+            tx.isExcludedFromStats = flags.excludedFromStats
+        }
+        try env.context.save()
+
+        let result = try progress(env)
+        // 只剔除 isExcludedFromBudget=true 的两笔；统计开关不影响预算。
+        #expect(result.total?.usedMinorUnits == 2_000)
+        #expect(result.categories.first?.usedMinorUnits == 2_000)
+    }
+
+    @Test func 转账手续费预算开关与统计开关四组合彼此独立() throws {
+        let env = try makeEnv()
+        try makeBudget(env, amount: 100_000)
+
+        let combinations = [
+            (excludedFromBudget: false, excludedFromStats: false),
+            (excludedFromBudget: false, excludedFromStats: true),
+            (excludedFromBudget: true, excludedFromStats: false),
+            (excludedFromBudget: true, excludedFromStats: true),
+        ]
+        for (index, flags) in combinations.enumerated() {
+            let tx = try recordTransfer(env, fee: "1", day: index + 1)
+            tx.isExcludedFromBudget = flags.excludedFromBudget
+            tx.isExcludedFromStats = flags.excludedFromStats
+        }
+        try env.context.save()
+
+        // 转账本金不计预算，只有两笔未排除的手续费各 100 分。
+        #expect(try progress(env).total?.usedMinorUnits == 200)
+    }
+
     @Test func 软删流水被剔除() throws {
         let env = try makeEnv()
         let food = try makeCategory(env, name: "餐饮")
@@ -149,6 +223,19 @@ struct BudgetProgressProviderTests {
         let result = try progress(env)
         #expect(result.total!.budget.amountMinorUnits == 100_000)
         #expect(result.total!.budget.periodYear == nil)
+    }
+
+    @Test func 历史重复预算行稳定选取最新一条() throws {
+        let env = try makeEnv()
+        let older = Budget(ledgerID: env.ledgerID, amountMinorUnits: 10_000)
+        older.updatedAt = Date(timeIntervalSince1970: 1)
+        let newer = Budget(ledgerID: env.ledgerID, amountMinorUnits: 20_000)
+        newer.updatedAt = Date(timeIntervalSince1970: 2)
+        env.context.insert(older)
+        env.context.insert(newer)
+        try env.context.save()
+
+        #expect(try progress(env).total?.budget.uuid == newer.uuid)
     }
 
     @Test func 软删预算行不出现在进度里() throws {

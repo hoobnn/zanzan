@@ -96,6 +96,53 @@ struct AssetsOverviewProviderTests {
         #expect(group.balanceTotalMinorUnits == 5_000)
     }
 
+    @Test func asOf之后的未来流水不计入净值与分组小计() throws {
+        let context = try makeContext()
+        let account = Account(name: "现金", kind: .fund)
+        account.initialBalanceMinorUnits = 10_000
+        context.insert(account)
+        let asOf = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let past = Transaction(
+            kind: .expense,
+            amountMinorUnits: 1_000,
+            occurredAt: asOf.addingTimeInterval(-60),
+            ledgerID: UUID()
+        )
+        past.account = account
+        let future = Transaction(
+            kind: .income,
+            amountMinorUnits: 50_000,
+            occurredAt: asOf.addingTimeInterval(60),
+            ledgerID: UUID()
+        )
+        future.account = account
+        context.insert(past)
+        context.insert(future)
+        try context.save()
+
+        let overview = try AssetsOverviewProvider(context: context).overview(asOf: asOf)
+        #expect(overview.totalAssetsMinorUnits == 9_000)
+        #expect(overview.netWorthMinorUnits == 9_000)
+        #expect(overview.groups.first?.balanceTotalMinorUnits == 9_000)
+        #expect(overview.groups.first?.items.first?.balanceMinorUnits == 9_000)
+    }
+
+    @Test func 净值跨账户聚合溢出抛MoneyArithmeticError而非崩溃() throws {
+        let context = try makeContext()
+        let first = Account(name: "极值一", kind: .fund)
+        first.initialBalanceMinorUnits = Int.max
+        let second = Account(name: "极值二", kind: .fund)
+        second.initialBalanceMinorUnits = Int.max
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        #expect(throws: MoneyArithmeticError.self) {
+            try AssetsOverviewProvider(context: context).overview()
+        }
+    }
+
     // MARK: - 折算口径②（净资产按该币种全库最近快照折算）
 
     /// 直接构造外币流水（并行代理正在加 Draft 外币字段，测试不依赖在途 API）

@@ -21,9 +21,7 @@ struct InstallmentPlanProgress {
     let nextDuePeriod: InstallmentPeriod?
 
     /// 已还本金合计 = 逐期已还 + 提前结清覆盖；恒有 已还 + 剩余 == 计划总本金
-    var paidPrincipalMinorUnits: Int {
-        settledPrincipalMinorUnits + earlySettledPrincipalMinorUnits
-    }
+    let paidPrincipalMinorUnits: Int
 }
 
 /// 分期计划进度只读投影：进度口径完全由期表状态派生，
@@ -54,13 +52,23 @@ struct InstallmentPlanProvider {
             switch period.status {
             case .settled:
                 settledCount += 1
-                settledPrincipal += period.principalMinorUnits
-                settledInterest += period.interestMinorUnits
+                settledPrincipal = try MoneyArithmetic.add(
+                    settledPrincipal, period.principalMinorUnits
+                )
+                settledInterest = try MoneyArithmetic.add(
+                    settledInterest, period.interestMinorUnits
+                )
             case .cancelled:
-                cancelledPrincipal += period.principalMinorUnits
+                cancelledPrincipal = try MoneyArithmetic.add(
+                    cancelledPrincipal, period.principalMinorUnits
+                )
             case .pending:
-                pendingPrincipal += period.principalMinorUnits
-                pendingInterest += period.interestMinorUnits
+                pendingPrincipal = try MoneyArithmetic.add(
+                    pendingPrincipal, period.principalMinorUnits
+                )
+                pendingInterest = try MoneyArithmetic.add(
+                    pendingInterest, period.interestMinorUnits
+                )
                 if nextDue == nil { nextDue = period } // 已按期序升序
             case nil:
                 continue // 状态未知（前向兼容）：剔除精确统计，不计入任何口径
@@ -76,7 +84,10 @@ struct InstallmentPlanProvider {
             remainingPrincipalMinorUnits: pendingPrincipal,
             settledInterestMinorUnits: settledInterest,
             remainingInterestMinorUnits: pendingInterest,
-            nextDuePeriod: nextDue
+            nextDuePeriod: nextDue,
+            paidPrincipalMinorUnits: try MoneyArithmetic.add(
+                settledPrincipal, cancelledPrincipal
+            )
         )
     }
 }
@@ -86,7 +97,7 @@ enum InstallmentPlanProviderError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .planNotFound: String(localized: "分期计划不存在")
+        case .planNotFound: ZanzanLocalization.string( "分期计划不存在")
         }
     }
 }

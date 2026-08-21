@@ -32,7 +32,7 @@ struct TransactionDraftTests {
     }
 
     @Test func 非法汇率拒绝() {
-        for bad in ["1,2", "1e3", "6.89abc", "0", "-1"] {
+        for bad in ["1,2", "1e3", "6.89abc", "0", "-1", "10000"] {
             var draft = transferDraft()
             draft.fxRateString = bad
             #expect(throws: TransactionDraftError.invalidFxRate) { _ = try draft.validated() }
@@ -43,6 +43,26 @@ struct TransactionDraftTests {
         var draft = transferDraft()
         draft.fxRateString = "6.8912"
         #expect(try draft.validated().fxRateToBase == Decimal(string: "6.8912"))
+    }
+
+    @Test func 位置三字段同空同有且校验坐标范围() throws {
+        var draft = transferDraft()
+        draft.locationName = "公司"
+        #expect(throws: TransactionDraftError.invalidLocation) {
+            _ = try draft.validated()
+        }
+
+        draft.locationLatitudeString = "31.2304"
+        draft.locationLongitudeString = "121.4737"
+        let location = try draft.validated()
+        #expect(location.locationName == "公司")
+        #expect(abs((location.locationLatitude ?? 0) - 31.2304) < 0.000_001)
+        #expect(abs((location.locationLongitude ?? 0) - 121.4737) < 0.000_001)
+
+        draft.locationLatitudeString = "91"
+        #expect(throws: TransactionDraftError.invalidLocation) {
+            _ = try draft.validated()
+        }
     }
 
     // MARK: - DraftLimits 边界

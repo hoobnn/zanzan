@@ -45,6 +45,12 @@ struct TransactionCSVImporterTests {
         try context.fetchCount(FetchDescriptor<Transaction>(predicate: #Predicate { !$0.isSoftDeleted }))
     }
 
+    private func activeSnapshotCount(_ context: ModelContext, accountUUID: UUID) throws -> Int {
+        try context.fetchCount(FetchDescriptor<BalanceSnapshot>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.accountID == accountUUID }
+        ))
+    }
+
     @Test func 成功导入建批次并挂来源() throws {
         let f = try makeFixture()
         let csv = """
@@ -137,6 +143,29 @@ struct TransactionCSVImporterTests {
         #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
     }
 
+    @Test func 同名账户歧义整批拒绝且零写入() throws {
+        let f = try makeFixture()
+        f.context.insert(Account(name: "现金", kind: .fund))
+        try f.context.save()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,,同名账户
+        """
+
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "duplicate-account.csv",
+                ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("同名账户应作为行级歧义整批拒绝")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2])
+            #expect(errors[0].message == "账户「现金」存在多个同名候选，无法确定")
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
+    }
+
     @Test func 分类方向不符按不存在处理() throws {
         let f = try makeFixture()
         let salary = Category(name: "工资", kind: .income, sortOrder: 0)
@@ -157,11 +186,34 @@ struct TransactionCSVImporterTests {
         }
     }
 
+    @Test func 同方向同名分类歧义整批拒绝且零写入() throws {
+        let f = try makeFixture()
+        f.context.insert(Category(name: "餐饮", kind: .expense, sortOrder: 1))
+        try f.context.save()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,,同名分类
+        """
+
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "duplicate-category.csv",
+                ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("同方向同名分类应作为行级歧义整批拒绝")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2])
+            #expect(errors[0].message == "分类「餐饮」存在多个同名候选，无法确定")
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
+    }
+
     // MARK: - 多币种列（币种/汇率/到账金额）
 
     @Test func 新格式外币行与跨币种转账导入() throws {
         let f = try makeFixture()
-        try makeUSDAccount(f)
+        _ = try makeUSDAccount(f)
         let csv = """
         \(headerV2)
         2026-01-05 12:00:00,支出,100,餐饮,美元卡,,,午饭,USD,7.2,
@@ -187,7 +239,7 @@ struct TransactionCSVImporterTests {
 
     @Test func 多币种非法行聚合报错() throws {
         let f = try makeFixture()
-        try makeUSDAccount(f)
+        _ = try makeUSDAccount(f)
         let csv = """
         \(headerV2)
         2026-01-01,支出,10,餐饮,美元卡,,,外币缺汇率,USD,,
@@ -212,7 +264,7 @@ struct TransactionCSVImporterTests {
 
     @Test func 旧格式引用外币账户按币种不符阻断() throws {
         let f = try makeFixture()
-        try makeUSDAccount(f)
+        _ = try makeUSDAccount(f)
         // 旧 8 列格式按 CNY 兼容读入，但账户是 USD → 行级报币种不符（旧格式装不下外币数据）
         let csv = header + "\n2026-01-01,支出,10,餐饮,美元卡,,,\n"
         do {
@@ -262,6 +314,22 @@ struct TransactionCSVImporterTests {
         }
     }
 
+    @Test func 归档账本在预校验阶段拒绝且零写入() throws {
+        let f = try makeFixture()
+        f.ledger.isArchived = true
+        try f.context.save()
+        let csv = header + "\n2026-01-01,支出,10,餐饮,现金,,,归档账本\n"
+
+        #expect(throws: TransactionCSVImportError.ledgerArchived) {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "archived-ledger.csv",
+                ledgerID: f.ledger.uuid, importedAt: self.importedAt
+            )
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
+    }
+
     @Test func 整批撤销软删流水与批次且幂等() throws {
         let f = try makeFixture()
         let csv = """
@@ -287,6 +355,219 @@ struct TransactionCSVImporterTests {
         #expect(try f.context.fetchCount(FetchDescriptor<Transaction>()) == 2)
     }
 
+    @Test func 整批恢复只恢复本次撤销的流水() throws {
+        let f = try makeFixture()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,,此前单独删除
+        2026-01-02,支出,20,餐饮,现金,,,随批次撤销
+        """
+        let importer = TransactionCSVImporter(context: f.context)
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "restore.csv",
+            ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        let batchUUID = batch.uuid
+        let transactions = try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.sourceID == batchUUID },
+            sortBy: [SortDescriptor(\.occurredAt)]
+        ))
+        let individuallyDeleted = try #require(transactions.first)
+        let batchDeleted = try #require(transactions.last)
+        try TransactionService(context: f.context)
+            .softDeleteTransaction(uuid: individuallyDeleted.uuid)
+        individuallyDeleted.updatedAt = importedAt
+        try f.context.save()
+        try importer.undoBatch(batchUUID: batch.uuid)
+
+        try importer.restoreBatch(batchUUID: batch.uuid)
+
+        #expect(!batch.isSoftDeleted)
+        #expect(individuallyDeleted.isSoftDeleted)
+        #expect(!batchDeleted.isSoftDeleted)
+        #expect(try activeTransactionCount(f.context) == 1)
+    }
+
+    @Test func 整批恢复重复调用幂等且不改更新时间() throws {
+        let f = try makeFixture()
+        let csv = header + "\n2026-01-01,支出,10,餐饮,现金,,,\n"
+        let importer = TransactionCSVImporter(context: f.context)
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "idempotent.csv",
+            ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        let batchUUID = batch.uuid
+        let transaction = try #require(try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.sourceID == batchUUID }
+        )).first)
+        try importer.undoBatch(batchUUID: batch.uuid)
+        try importer.restoreBatch(batchUUID: batch.uuid)
+        let batchUpdatedAt = batch.updatedAt
+        let transactionUpdatedAt = transaction.updatedAt
+
+        try importer.restoreBatch(batchUUID: batch.uuid)
+
+        #expect(!batch.isSoftDeleted)
+        #expect(!transaction.isSoftDeleted)
+        #expect(batch.updatedAt == batchUpdatedAt)
+        #expect(transaction.updatedAt == transactionUpdatedAt)
+    }
+
+    @Test func 整批恢复引用失效时零部分写入() throws {
+        let f = try makeFixture()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,,引用有效
+        2026-01-02,支出,20,餐饮,储蓄卡,,,引用随后失效
+        """
+        let importer = TransactionCSVImporter(context: f.context)
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "invalid-reference.csv",
+            ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        try importer.undoBatch(batchUUID: batch.uuid)
+        f.card.isSoftDeleted = true
+        try f.context.save()
+
+        do {
+            try importer.restoreBatch(batchUUID: batch.uuid)
+            Issue.record("任一流水引用失效时应整批拒绝恢复")
+        } catch TransactionServiceError.restoreReferenceDeleted {
+            // 预期错误
+        } catch {
+            Issue.record("错误类型不符：\(error)")
+        }
+
+        #expect(batch.isSoftDeleted)
+        #expect(try activeTransactionCount(f.context) == 0)
+        let batchUUID = batch.uuid
+        #expect(try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.sourceID == batchUUID }
+        )).allSatisfy(\.isSoftDeleted))
+    }
+
+    @Test func 整批恢复遇到账单标记时不绕过报销状态机() throws {
+        let f = try makeFixture()
+        let importer = TransactionCSVImporter(context: f.context)
+        let batch = try importer.importTransactions(
+            csv: header + "\n2026-01-01,支出,10,餐饮,现金,,,到账标记损坏\n",
+            fileName: "settlement-guard.csv",
+            ledgerID: f.ledger.uuid,
+            importedAt: importedAt
+        )
+        try importer.undoBatch(batchUUID: batch.uuid)
+        let batchUUID = batch.uuid
+        let transaction = try #require(try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.sourceID == batchUUID }
+        )).first)
+        transaction.settlementKindRawValue = TransactionLinkKind.reimbursement.rawValue
+        try f.context.save()
+
+        #expect(throws: TransactionServiceError.managedByReimbursement) {
+            try importer.restoreBatch(batchUUID: batch.uuid)
+        }
+        #expect(batch.isSoftDeleted)
+        #expect(transaction.isSoftDeleted)
+    }
+
+    @Test func 整批恢复按最早时点失效转账双方快照() throws {
+        let f = try makeFixture()
+        let importer = TransactionCSVImporter(context: f.context)
+        let snapshotService = BalanceSnapshotService(context: f.context)
+        let midSnapshotAt = TransactionCSV.shortDateFormatter.date(from: "2026-01-10")!
+        let lateSnapshotAt = TransactionCSV.shortDateFormatter.date(from: "2026-01-31")!
+        let csv = """
+        \(header)
+        2026-01-05,转账,10,,现金,储蓄卡,0.10,早期
+        2026-01-20,转账,20,,现金,储蓄卡,0.20,晚期
+        """
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "restore-snapshots.csv",
+            ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        try importer.undoBatch(batchUUID: batch.uuid)
+        for account in [f.cash, f.card] {
+            try snapshotService.generateSnapshot(accountUUID: account.uuid, asOf: midSnapshotAt)
+            try snapshotService.generateSnapshot(accountUUID: account.uuid, asOf: lateSnapshotAt)
+        }
+
+        try importer.restoreBatch(batchUUID: batch.uuid)
+
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.cash.uuid) == 0)
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.card.uuid) == 0)
+    }
+
+    @Test func 活跃报销退款关联阻断整批撤销且不留下悬空关联() throws {
+        let f = try makeFixture()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,现金,,,待退款原单
+        """
+        let importer = TransactionCSVImporter(context: f.context)
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "linked.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        let batchUUID = batch.uuid
+        let imported = try #require(try f.context.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { !$0.isSoftDeleted && $0.sourceID == batchUUID }
+        )).first)
+        let settlement = try ReimbursementService(context: f.context).recordSettlement(
+            kind: .refund,
+            amountMinorUnits: imported.amountMinorUnits,
+            occurredAt: importedAt,
+            accountUUID: f.cash.uuid,
+            ledgerID: f.ledger.uuid,
+            allocations: [
+                .init(
+                    originalTransactionUUID: imported.uuid,
+                    amountMinorUnits: imported.amountMinorUnits
+                ),
+            ]
+        )
+
+        #expect(throws: TransactionCSVImportError.batchHasActiveTransactionLinks) {
+            try importer.undoBatch(batchUUID: batch.uuid)
+        }
+        #expect(!batch.isSoftDeleted)
+        #expect(!imported.isSoftDeleted)
+        #expect(!settlement.isSoftDeleted)
+        #expect(try f.context.fetchCount(FetchDescriptor<TransactionLink>(
+            predicate: #Predicate { !$0.isSoftDeleted }
+        )) == 1)
+    }
+
+    @Test func 导入与整批撤销按最早时点失效转账双方快照() throws {
+        let f = try makeFixture()
+        let importer = TransactionCSVImporter(context: f.context)
+        let snapshotService = BalanceSnapshotService(context: f.context)
+        let midSnapshotAt = TransactionCSV.shortDateFormatter.date(from: "2026-01-10")!
+        let lateSnapshotAt = TransactionCSV.shortDateFormatter.date(from: "2026-01-31")!
+        let csv = """
+        \(header)
+        2026-01-05,转账,10,,现金,储蓄卡,0.10,早期
+        2026-01-20,转账,20,,现金,储蓄卡,0.20,晚期
+        """
+
+        // 创建路径经 TransactionService 落库：来源与目标账户的既有晚期快照都应失效。
+        try snapshotService.generateSnapshot(accountUUID: f.cash.uuid, asOf: lateSnapshotAt)
+        try snapshotService.generateSnapshot(accountUUID: f.card.uuid, asOf: lateSnapshotAt)
+        let batch = try importer.importTransactions(
+            csv: csv, fileName: "transfers.csv",
+            ledgerID: f.ledger.uuid, importedAt: importedAt
+        )
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.cash.uuid) == 0)
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.card.uuid) == 0)
+
+        // 撤销必须按批内最早 1/5 失效：1/10 与 1/31 两个检查点均应被清掉。
+        for account in [f.cash, f.card] {
+            try snapshotService.generateSnapshot(accountUUID: account.uuid, asOf: midSnapshotAt)
+            try snapshotService.generateSnapshot(accountUUID: account.uuid, asOf: lateSnapshotAt)
+        }
+        try importer.undoBatch(batchUUID: batch.uuid)
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.cash.uuid) == 0)
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.card.uuid) == 0)
+    }
+
     @Test func 非转账行带手续费行级报错() throws {
         let f = try makeFixture()
         let csv = """
@@ -304,6 +585,39 @@ struct TransactionCSVImporterTests {
             #expect(errors.map(\.line) == [2, 3]) // 手续费不再被静默归零
         }
         #expect(try activeTransactionCount(f.context) == 0)
+    }
+
+    @Test func 服务层第二行失败时批次流水与快照失效统一回滚() throws {
+        let f = try makeFixture()
+        var childDraft = CategoryDraft()
+        childDraft.name = "早餐"
+        childDraft.kind = .expense
+        childDraft.parentID = f.dining.uuid
+        _ = try CategoryService(context: f.context).createCategory(childDraft)
+        f.context.insert(Category(name: "交通", kind: .expense, sortOrder: 1))
+        f.dining.isArchived = true
+        try f.context.save()
+
+        let snapshotAt = TransactionCSV.shortDateFormatter.date(from: "2026-01-31")!
+        try BalanceSnapshotService(context: f.context).generateSnapshot(
+            accountUUID: f.cash.uuid, asOf: snapshotAt
+        )
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.cash.uuid) == 1)
+        let csv = """
+        \(header)
+        2026-01-05,支出,10,交通,现金,,,第一行可落库
+        2026-01-06,支出,10,早餐,现金,,,子分类自身未归档但父分类已归档
+        """
+
+        #expect(throws: TransactionServiceError.categoryArchived) {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "stage-failure.csv",
+                ledgerID: f.ledger.uuid, importedAt: self.importedAt
+            )
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
+        #expect(try activeSnapshotCount(f.context, accountUUID: f.cash.uuid) == 1)
     }
 
     @Test func 半批崩溃现场undoBatch可清理且幂等() throws {
@@ -362,10 +676,57 @@ struct TransactionCSVImporterTests {
 
     // MARK: - 行数上限与归档策略
 
+    @Test func 超过字节上限时在解析前整批拒绝() throws {
+        let f = try makeFixture()
+        let csv = String(
+            repeating: "x",
+            count: TransactionCSVImporter.maxImportByteCount + 1
+        )
+
+        #expect(
+            throws: TransactionCSVImportError.fileTooLarge(
+                limitMiB: TransactionCSVImporter.maxImportByteCount / 1_024 / 1_024
+            )
+        ) {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv,
+                fileName: "oversized.csv",
+                ledgerID: f.ledger.uuid,
+                importedAt: self.importedAt
+            )
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
+    }
+
+    @Test func URL读取按文件大小提前拒绝超限输入() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(
+            path: "CSVReadLimitTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "oversized.csv")
+        #expect(FileManager.default.createFile(atPath: url.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(
+            atOffset: UInt64(TransactionCSVImporter.maxImportByteCount + 1)
+        )
+        try handle.close()
+
+        #expect(
+            throws: TransactionCSVImportError.fileTooLarge(
+                limitMiB: TransactionCSVImporter.maxImportByteCount / 1_024 / 1_024
+            )
+        ) {
+            _ = try TransactionCSVImporter.readCSV(from: url)
+        }
+    }
+
     @Test func 超过行数上限整批拒绝() throws {
         let f = try makeFixture()
         let rows = String(repeating: "2026-01-01,支出,10,餐饮,现金,,,\n", count: TransactionCSVImporter.maxImportRows + 1)
-        let csv = header + "\n" + rows
+        let csv = header + "\n" + rows + "\"未闭合"
         #expect(throws: TransactionCSVImportError.tooManyRows(limit: TransactionCSVImporter.maxImportRows)) {
             try TransactionCSVImporter(context: f.context).importTransactions(
                 csv: csv, fileName: "big.csv", ledgerID: f.ledger.uuid, importedAt: importedAt
@@ -412,5 +773,31 @@ struct TransactionCSVImporterTests {
             #expect(errors[0].message == TransactionCSVImportError.accountArchived("储蓄卡").localizedDescription)
         }
         #expect(try activeTransactionCount(f.context) == 0)
+    }
+
+    @Test func 不可记账账户作为来源或转入方均在预校验阶段按行拒绝() throws {
+        let f = try makeFixture()
+        f.card.isSelectableForRecord = false
+        try f.context.save()
+        let csv = """
+        \(header)
+        2026-01-01,支出,10,餐饮,储蓄卡,,,来源账户不可记账
+        2026-01-02,转账,10,,现金,储蓄卡,,转入账户不可记账
+        """
+
+        do {
+            try TransactionCSVImporter(context: f.context).importTransactions(
+                csv: csv, fileName: "not-selectable.csv",
+                ledgerID: f.ledger.uuid, importedAt: importedAt
+            )
+            Issue.record("不可记账账户应在预校验阶段整批拒绝")
+        } catch let TransactionCSVImportError.invalidRows(errors) {
+            #expect(errors.map(\.line) == [2, 3])
+            #expect(errors.allSatisfy {
+                $0.message == TransactionCSVImportError.accountNotSelectable("储蓄卡").localizedDescription
+            })
+        }
+        #expect(try activeTransactionCount(f.context) == 0)
+        #expect(try f.context.fetchCount(FetchDescriptor<ImportBatch>()) == 0)
     }
 }

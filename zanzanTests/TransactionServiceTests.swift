@@ -63,9 +63,31 @@ struct TransactionServiceTests {
 
     @Test func ledgerID必须指向活跃账本() throws {
         let f = try makeFixture()
-        #expect(throws: TransactionServiceError.self) {
+        #expect(throws: TransactionServiceError.ledgerNotFound) {
             _ = try TransactionService(context: f.context).recordTransaction(self.expenseDraft(f), ledgerID: UUID())
         }
+    }
+
+    @Test func 归档账本在recordStageUpdate共用入口被拒() throws {
+        let f = try makeFixture()
+        let service = TransactionService(context: f.context)
+        let tx = try service.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        f.ledger.isArchived = true
+        try f.context.save()
+
+        #expect(throws: TransactionServiceError.ledgerArchived) {
+            try service.recordTransaction(self.expenseDraft(f), ledgerID: f.ledger.uuid)
+        }
+        #expect(throws: TransactionServiceError.ledgerArchived) {
+            try service.stageTransaction(self.expenseDraft(f), ledgerID: f.ledger.uuid)
+        }
+        #expect(throws: TransactionServiceError.ledgerArchived) {
+            try service.updateTransaction(
+                uuid: tx.uuid,
+                draft: self.expenseDraft(f, amount: "30")
+            )
+        }
+        #expect(tx.amountMinorUnits == 2_550)
     }
 
     @Test func 分类方向不匹配阻断() throws {
@@ -75,6 +97,26 @@ struct TransactionServiceTests {
         #expect(throws: TransactionServiceError.self) {
             _ = try TransactionService(context: f.context).recordTransaction(draft, ledgerID: f.ledger.uuid)
         }
+    }
+
+    @Test func 拒绝跨账本专属分类() throws {
+        let f = try makeFixture()
+        let other = try LedgerService(context: f.context)
+            .createLedger(LedgerDraft(name: "旅行"))
+        let scoped = Category(name: "旅行餐饮", kind: .expense, sortOrder: 0)
+        scoped.ledgerID = other.uuid
+        f.context.insert(scoped)
+        try f.context.save()
+
+        var draft = expenseDraft(f)
+        draft.categoryUUID = scoped.uuid
+        #expect(throws: TransactionServiceError.categoryLedgerMismatch) {
+            _ = try TransactionService(context: f.context)
+                .recordTransaction(draft, ledgerID: f.ledger.uuid)
+        }
+
+        _ = try TransactionService(context: f.context)
+            .recordTransaction(draft, ledgerID: other.uuid)
     }
 
     @Test func 金额非法被拒() throws {
@@ -135,6 +177,24 @@ struct TransactionServiceTests {
         #expect(tx.account?.uuid == f.card.uuid)
     }
 
+    @Test func 位置与统计排除开关往返() throws {
+        let f = try makeFixture()
+        var draft = expenseDraft(f)
+        draft.locationName = "公司"
+        draft.locationLatitudeString = "31.2304"
+        draft.locationLongitudeString = "121.4737"
+        draft.isExcludedFromBudget = true
+        draft.isExcludedFromStats = true
+        let tx = try TransactionService(context: f.context)
+            .recordTransaction(draft, ledgerID: f.ledger.uuid)
+
+        #expect(tx.locationName == "公司")
+        #expect(abs((tx.locationLatitude ?? 0) - 31.2304) < 0.000_001)
+        #expect(abs((tx.locationLongitude ?? 0) - 121.4737) < 0.000_001)
+        #expect(tx.isExcludedFromBudget)
+        #expect(tx.isExcludedFromStats)
+    }
+
     @Test func 软删与撤销() throws {
         let f = try makeFixture()
         let commands = TransactionService(context: f.context)
@@ -143,6 +203,41 @@ struct TransactionServiceTests {
         #expect(tx.isSoftDeleted)
         try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
         #expect(!tx.isSoftDeleted)
+    }
+
+    @Test func 导入批次仍撤销时禁止逐笔恢复流水() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let batch = ImportBatch(fileName: "deleted.csv", importedAt: .now)
+        f.context.insert(batch)
+        let tx = try commands.recordTransaction(
+            expenseDraft(f),
+            ledgerID: f.ledger.uuid,
+            source: (kind: .csvImport, id: batch.uuid)
+        )
+        try commands.softDeleteTransaction(uuid: tx.uuid)
+        batch.isSoftDeleted = true
+        try f.context.save()
+
+        #expect(throws: TransactionServiceError.managedByImportBatch) {
+            try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
+        }
+        #expect(tx.isSoftDeleted)
+    }
+
+    @Test func 未知来源流水保持只读不可恢复() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
+        try commands.softDeleteTransaction(uuid: tx.uuid)
+        tx.sourceKindRawValue = "futureSource"
+        try f.context.save()
+
+        #expect(throws: TransactionServiceError.unsupportedSourceKind) {
+            try commands.undoSoftDeleteTransaction(uuid: tx.uuid)
+        }
+        #expect(tx.isSoftDeleted)
+        #expect(tx.sourceKindRawValue == "futureSource")
     }
 
     // MARK: - 多币种（§5.4 必填规则）
@@ -180,6 +275,31 @@ struct TransactionServiceTests {
         second.accountUUID = usd.uuid // 不填汇率
         let tx = try commands.recordTransaction(second, ledgerID: f.ledger.uuid)
         #expect(tx.fxRateToBase == Decimal(string: "7.10"))
+    }
+
+    @Test func 补记外币流水只使用发生时点之前的汇率快照() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        let commands = TransactionService(context: f.context)
+
+        var old = expenseDraft(f)
+        old.accountUUID = usd.uuid
+        old.fxRateString = "7.00"
+        old.occurredAt = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01 UTC
+        _ = try commands.recordTransaction(old, ledgerID: f.ledger.uuid)
+
+        var newer = expenseDraft(f)
+        newer.accountUUID = usd.uuid
+        newer.fxRateString = "7.50"
+        newer.occurredAt = Date(timeIntervalSince1970: 1_772_323_200) // 2026-03-07 UTC
+        _ = try commands.recordTransaction(newer, ledgerID: f.ledger.uuid)
+
+        var backdated = expenseDraft(f)
+        backdated.accountUUID = usd.uuid
+        backdated.occurredAt = Date(timeIntervalSince1970: 1_769_904_000) // 2026-02-06 UTC
+        let tx = try commands.recordTransaction(backdated, ledgerID: f.ledger.uuid)
+
+        #expect(tx.fxRateToBase == Decimal(string: "7.00"))
     }
 
     @Test func 外币支出无汇率无快照抛错() throws {
@@ -376,6 +496,32 @@ struct TransactionServiceTests {
         #expect(original.reimbursementStatus == .waiting)
     }
 
+    @Test func 原单有活跃分摊时禁止切换账户币种且失败保持原子性() throws {
+        let f = try makeFixture()
+        let usd = try makeUSDAccount(f)
+        let commands = TransactionService(context: f.context)
+        let (original, _) = try makeReimbursedPair(f)
+        let originalID = original.uuid
+        let link = try #require(try f.context.fetch(
+            FetchDescriptor<TransactionLink>(predicate: #Predicate {
+                !$0.isSoftDeleted && $0.originalTransactionID == originalID
+            })
+        ).first)
+
+        var edit = expenseDraft(f)
+        edit.accountUUID = usd.uuid
+        edit.fxRateString = "7.2"
+
+        #expect(throws: TransactionServiceError.hasReimbursementLinks) {
+            try commands.updateTransaction(uuid: original.uuid, draft: edit)
+        }
+        #expect(original.account?.uuid == f.cash.uuid)
+        #expect(original.currencyCode == "CNY")
+        #expect(original.fxRateToBase == nil)
+        #expect(!link.isSoftDeleted)
+        #expect(link.amountMinorUnits == 1_000)
+    }
+
     @Test func 恢复流水引用已删账户被阻断() throws {
         let f = try makeFixture()
         let commands = TransactionService(context: f.context)
@@ -454,7 +600,7 @@ struct TransactionServiceTests {
         #expect(tx.targetAmountMinorUnits == nil)
     }
 
-    // MARK: - 归档实体新引用禁止（§4）
+    // MARK: - 停用引用禁止记账与编辑（§4）
 
     @Test func 归档账户记账被拒() throws {
         let f = try makeFixture()
@@ -462,7 +608,7 @@ struct TransactionServiceTests {
         f.card.isArchived = true
         try f.context.save()
         let commands = TransactionService(context: f.context)
-        #expect(throws: TransactionServiceError.self) {
+        #expect(throws: TransactionServiceError.accountArchived) {
             _ = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
         }
         // 转入方归档同样阻断
@@ -473,8 +619,30 @@ struct TransactionServiceTests {
         transfer.targetAccountUUID = f.card.uuid
         f.cash.isArchived = false
         try f.context.save()
-        #expect(throws: TransactionServiceError.self) {
+        #expect(throws: TransactionServiceError.accountArchived) {
             _ = try commands.recordTransaction(transfer, ledgerID: f.ledger.uuid)
+        }
+    }
+
+    @Test func 不可记账账户作为转出或转入方均被拒() throws {
+        let f = try makeFixture()
+        let commands = TransactionService(context: f.context)
+        f.cash.isSelectableForRecord = false
+        try f.context.save()
+        #expect(throws: TransactionServiceError.accountNotSelectable) {
+            try commands.stageTransaction(self.expenseDraft(f), ledgerID: f.ledger.uuid)
+        }
+
+        f.cash.isSelectableForRecord = true
+        f.card.isSelectableForRecord = false
+        try f.context.save()
+        var transfer = TransactionDraft()
+        transfer.kind = .transfer
+        transfer.amountString = "100"
+        transfer.accountUUID = f.cash.uuid
+        transfer.targetAccountUUID = f.card.uuid
+        #expect(throws: TransactionServiceError.accountNotSelectable) {
+            try commands.recordTransaction(transfer, ledgerID: f.ledger.uuid)
         }
     }
 
@@ -482,24 +650,57 @@ struct TransactionServiceTests {
         let f = try makeFixture()
         f.dining.isArchived = true
         try f.context.save()
-        #expect(throws: TransactionServiceError.self) {
+        #expect(throws: TransactionServiceError.categoryArchived) {
             _ = try TransactionService(context: f.context).recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
         }
     }
 
-    @Test func 编辑不换引用不受归档影响() throws {
+    @Test func 父分类归档时子分类不能用于记账或编辑() throws {
+        let f = try makeFixture()
+        var childDraft = CategoryDraft()
+        childDraft.name = "早餐"
+        childDraft.kind = .expense
+        childDraft.parentID = f.dining.uuid
+        let child = try CategoryService(context: f.context).createCategory(childDraft)
+        var draft = expenseDraft(f)
+        draft.categoryUUID = child.uuid
+        let commands = TransactionService(context: f.context)
+        let tx = try commands.recordTransaction(draft, ledgerID: f.ledger.uuid)
+
+        f.dining.isArchived = true
+        try f.context.save()
+        #expect(throws: TransactionServiceError.categoryArchived) {
+            try commands.recordTransaction(draft, ledgerID: f.ledger.uuid)
+        }
+        draft.amountString = "30"
+        #expect(throws: TransactionServiceError.categoryArchived) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: draft)
+        }
+        #expect(tx.amountMinorUnits == 2_550)
+    }
+
+    @Test func 编辑不换停用引用仍被拒且不污染上下文() throws {
         let f = try makeFixture()
         let commands = TransactionService(context: f.context)
         let tx = try commands.recordTransaction(expenseDraft(f), ledgerID: f.ledger.uuid)
-        // 事后归档账户与分类：修正错字/金额不该被卡（仅新引用禁止）
-        f.cash.isArchived = true
-        f.dining.isArchived = true
+        f.cash.isSelectableForRecord = false
         try f.context.save()
         var edit = expenseDraft(f, amount: "30")
         edit.note = "修正备注"
-        try commands.updateTransaction(uuid: tx.uuid, draft: edit)
-        #expect(tx.amountMinorUnits == 3_000)
-        #expect(tx.note == "修正备注")
+        #expect(throws: TransactionServiceError.accountNotSelectable) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: edit)
+        }
+        #expect(tx.amountMinorUnits == 2_550)
+        #expect(tx.note.isEmpty)
+
+        f.cash.isSelectableForRecord = true
+        f.dining.isArchived = true
+        try f.context.save()
+        #expect(throws: TransactionServiceError.categoryArchived) {
+            try commands.updateTransaction(uuid: tx.uuid, draft: edit)
+        }
+        #expect(tx.amountMinorUnits == 2_550)
+        #expect(tx.note.isEmpty)
     }
 
     @Test func 编辑换到归档账户被拒() throws {
@@ -510,7 +711,7 @@ struct TransactionServiceTests {
         try f.context.save()
         var edit = expenseDraft(f)
         edit.accountUUID = f.card.uuid
-        #expect(throws: TransactionServiceError.self) {
+        #expect(throws: TransactionServiceError.accountArchived) {
             try commands.updateTransaction(uuid: tx.uuid, draft: edit)
         }
         #expect(tx.account?.uuid == f.cash.uuid) // 阻断且不污染上下文
