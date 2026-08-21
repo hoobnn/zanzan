@@ -1,47 +1,120 @@
 import SwiftData
 import SwiftUI
 
-/// 记账页功能胶囊行：账户选择可用；报销/优惠/图片/标签/设置为占位（后续切片接功能）。
+/// 记账页功能胶囊行：账户、报销、附件与标签。
 struct RecordChipsRow: View {
     let accounts: [Account]
+    let tags: [Tag]
+    let showsReimbursement: Bool
+    let locksReimbursement: Bool
+    let onManageAttachments: () -> Void
     @Binding var selectedAccountUUID: UUID?
+    @Binding var selectedTagUUIDs: Set<UUID>
+    @Binding var isReimbursementMarked: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    accountChip
-                    // ponytail: 以下入口预留，仅占版式
-                    chipLabel(String(localized: "报销"), symbol: "circle", tint: .secondary)
-                    chipLabel(String(localized: "优惠"), symbol: "gift.fill", tint: .zanzanIncome)
-                    chipLabel(String(localized: "图片"), symbol: "photo.fill", tint: .zanzanWarm)
-                    chipLabel(String(localized: "标签"), symbol: "tag.fill", tint: .teal)
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                accountChip
+                if showsReimbursement {
+                    Button {
+                        isReimbursementMarked.toggle()
+                    } label: {
+                        chipLabel(
+                            isReimbursementMarked ? ZanzanLocalization.string("待报销") : ZanzanLocalization.string("报销"),
+                            symbol: isReimbursementMarked ? "checkmark.circle.fill" : "circle",
+                            tint: isReimbursementMarked ? .zanzanIncome : .secondary
+                        )
+                    }
+                    .disabled(locksReimbursement)
+                    .accessibilityValue(isReimbursementMarked ? Text("已选择") : Text("未选择"))
+                    .accessibilityAddTraits(isReimbursementMarked ? .isSelected : [])
                 }
-                .padding(.vertical, 6) // 给阴影留出裁切空间
+                Button(action: onManageAttachments) {
+                    chipLabel(
+                        ZanzanLocalization.string("图片"),
+                        symbol: "photo.fill",
+                        tint: .secondary
+                    )
+                }
+                tagMenu
             }
-            .scrollIndicators(.hidden)
-            Image(systemName: "gearshape.fill")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
-                .accessibilityHidden(true)
+            .padding(.vertical, 2)
         }
+        .scrollIndicators(.hidden)
+    }
+
+    private var tagMenu: some View {
+        Menu {
+            if tags.isEmpty {
+                Text("暂无可用标签")
+            }
+            ForEach(tags) { tag in
+                Button {
+                    if !selectedTagUUIDs.insert(tag.uuid).inserted {
+                        selectedTagUUIDs.remove(tag.uuid)
+                    }
+                } label: {
+                    if selectedTagUUIDs.contains(tag.uuid) {
+                        Label(tag.name, systemImage: "checkmark")
+                    } else {
+                        Text(tag.name)
+                    }
+                }
+            }
+        } label: {
+            chipLabel(
+                selectedTagUUIDs.isEmpty
+                    ? ZanzanLocalization.string("标签")
+                    : ZanzanLocalization.string("\(selectedTagUUIDs.count) 个标签"),
+                symbol: "tag.fill",
+                tint: .secondary
+            )
+        }
+        .accessibilityLabel("选择标签")
+        .accessibilityValue(
+            Text(verbatim: selectedTagUUIDs.isEmpty
+                 ? ZanzanLocalization.string("未选择")
+                 : ZanzanLocalization.string("\(selectedTagUUIDs.count) 个标签"))
+        )
     }
 
     private var accountChip: some View {
         Menu {
             ForEach(accounts) { account in
-                Button(account.name) { selectedAccountUUID = account.uuid }
+                Button {
+                    selectedAccountUUID = account.uuid
+                } label: {
+                    Label {
+                        Text(account.name)
+                    } icon: {
+                        AccountIconView(account: account, size: 22)
+                    }
+                }
             }
         } label: {
-            chipLabel(selectedAccountName ?? String(localized: "选择账户"), symbol: "creditcard.fill", tint: .zanzanWarm)
+            HStack(spacing: 5) {
+                if let selectedAccount {
+                    AccountIconView(account: selectedAccount, size: 24)
+                } else {
+                    Image(systemName: "creditcard.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(selectedAccount?.name ?? ZanzanLocalization.string("选择账户"))
+                    .font(.footnote)
+                    .foregroundStyle(Color.primary)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .glassEffect(.regular.tint(Color.zanzanSky.opacity(0.08)), in: .capsule)
         }
         .accessibilityLabel(Text("选择账户"))
+        .accessibilityValue(Text(verbatim: selectedAccount?.name ?? ZanzanLocalization.string("未选择")))
     }
 
-    private var selectedAccountName: String? {
-        accounts.first { $0.uuid == selectedAccountUUID }?.name
+    private var selectedAccount: Account? {
+        accounts.first { $0.uuid == selectedAccountUUID }
     }
 
     private func chipLabel(_ title: String, symbol: String, tint: Color) -> some View {
@@ -51,14 +124,10 @@ struct RecordChipsRow: View {
                 .foregroundStyle(tint)
             Text(title)
                 .font(.footnote)
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.primary)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            Capsule()
-                .fill(Color(.secondarySystemGroupedBackground))
-                .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
-        )
+        .frame(minHeight: 44)
+        .glassEffect(.regular.tint(tint.opacity(0.08)), in: .capsule)
     }
 }

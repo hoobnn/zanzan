@@ -8,31 +8,53 @@ struct TransactionsHomeView: View {
     private var ledgers: [Ledger]
 
     @State private var monthAnchor: Date = .now
+    @State private var selectedLedgerID: UUID?
 
     /// 默认账本归一化（设计文档 §4 同步合并兜底样板）：优先 isDefault，违例时回落首本。
     private var currentLedger: Ledger? {
-        ledgers.first(where: \.isDefault) ?? ledgers.first
+        ledgers.first { $0.uuid == selectedLedgerID }
+            ?? ledgers.first(where: \.isDefault)
+            ?? ledgers.first
     }
 
     var body: some View {
         Group {
             if let ledger = currentLedger {
                 TransactionListView(ledgerID: ledger.uuid, monthAnchor: $monthAnchor)
+                    .id(ledger.uuid)
             } else {
                 ContentUnavailableView(
                     "还没有账本",
                     systemImage: "book.closed",
                     description: Text("点右上角「账本管理」创建账本")
                 )
+                .zanzanSketchPageBackground()
             }
         }
         .navigationTitle("账本")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    LedgersListView()
+                Menu {
+                    Section("切换账本") {
+                        ForEach(ledgers) { ledger in
+                            Button {
+                                selectedLedgerID = ledger.uuid
+                            } label: {
+                                if ledger.uuid == currentLedger?.uuid {
+                                    Label(ledger.name, systemImage: "checkmark")
+                                } else {
+                                    Text(ledger.name)
+                                }
+                            }
+                        }
+                    }
+                    NavigationLink {
+                        LedgersListView()
+                    } label: {
+                        Label("账本管理", systemImage: "gearshape")
+                    }
                 } label: {
-                    Label("账本管理", systemImage: "ellipsis")
+                    Label(currentLedger?.name ?? ZanzanLocalization.string( "选择账本"), systemImage: "books.vertical")
                 }
             }
             ToolbarSpacer(.fixed, placement: .topBarTrailing)

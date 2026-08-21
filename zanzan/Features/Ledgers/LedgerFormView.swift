@@ -18,6 +18,9 @@ struct LedgerFormView: View {
                     Text(validationMessage).font(.footnote).foregroundStyle(.red)
                 }
             }
+            .textFieldStyle(.zanzan)
+            .zanzanCompactList()
+            .zanzanSketchPageBackground()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -26,6 +29,8 @@ struct LedgerFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }
+                        .buttonStyle(.glassProminent)
+                        .disabled(isSaving)
                 }
             }
         }

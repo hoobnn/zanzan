@@ -6,15 +6,15 @@ struct AppIconOptionRow: View {
     let isChanging: Bool
 
     var body: some View {
-        HStack {
+        HStack(spacing: ZanzanStyle.compactRowSpacing) {
             Image(option.previewAssetName)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 64, height: 64)
-                .clipShape(.rect(cornerRadius: 14))
+                .frame(width: 48, height: 48)
+                .clipShape(.rect(cornerRadius: 11))
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(option.title)
                     .font(.headline)
 

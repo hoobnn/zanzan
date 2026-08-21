@@ -3,7 +3,10 @@ import SwiftUI
 
 /// 底栏「记账」全屏入口：解析当前账本（默认账本归一化）后转交记一笔表单。
 struct RecordEntryView: View {
-    @Query(filter: #Predicate<Ledger> { !$0.isSoftDeleted }, sort: \Ledger.sortOrder)
+    @Query(
+        filter: #Predicate<Ledger> { !$0.isSoftDeleted && !$0.isArchived },
+        sort: \Ledger.sortOrder
+    )
     private var ledgers: [Ledger]
     @Environment(\.dismiss) private var dismiss
 
@@ -21,6 +24,7 @@ struct RecordEntryView: View {
                     systemImage: "book.closed",
                     description: Text("请到「账本」页创建账本")
                 )
+                .zanzanSketchPageBackground()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("关闭") { dismiss() }

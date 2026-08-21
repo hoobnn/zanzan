@@ -4,12 +4,12 @@ import Foundation
 extension AccountKind {
     var displayName: String {
         switch self {
-        case .fund: String(localized: "资金")
-        case .credit: String(localized: "信用")
-        case .prepaid: String(localized: "充值")
-        case .investment: String(localized: "理财")
-        case .receivable: String(localized: "应收")
-        case .payable: String(localized: "应付")
+        case .fund: ZanzanLocalization.string( "资金")
+        case .credit: ZanzanLocalization.string( "信用")
+        case .prepaid: ZanzanLocalization.string( "充值")
+        case .investment: ZanzanLocalization.string( "理财")
+        case .receivable: ZanzanLocalization.string( "应收")
+        case .payable: ZanzanLocalization.string( "应付")
         }
     }
 

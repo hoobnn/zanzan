@@ -6,6 +6,10 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7A6A00010000000000000002 /* Icons in Resources */ = {isa = PBXBuildFile; fileRef = 7A6A00010000000000000001 /* Icons */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		25CE93F62FFB8F2C006CBD50 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		25CE93E42FFB8F2B006CBD50 /* zanzan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = zanzan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		25CE93F52FFB8F2C006CBD50 /* zanzanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = zanzanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		25CE93FF2FFB8F2C006CBD50 /* zanzanUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = zanzanUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A6A00010000000000000001 /* Icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Icons; path = Resources/Icons; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -91,6 +96,7 @@
 				25CE93E62FFB8F2B006CBD50 /* zanzan */,
 				25CE93F82FFB8F2C006CBD50 /* zanzanTests */,
 				25CE94022FFB8F2C006CBD50 /* zanzanUITests */,
+				7A6A00010000000000000001 /* Icons */,
 				25CE93E52FFB8F2B006CBD50 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -218,6 +224,7 @@
 		25CE93E22FFB8F2B006CBD50 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
+				7A6A00010000000000000002 /* Icons in Resources */,
 			);
 		};
 		25CE93F32FFB8F2C006CBD50 /* Resources */ = {
@@ -387,7 +394,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -445,7 +452,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -463,7 +470,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8FUPL8QHFH;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ikuyu.zanzanTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -485,7 +492,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8FUPL8QHFH;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ikuyu.zanzanTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -3,18 +3,14 @@ import SwiftUI
 /// 流水行：彩色圆底图标 + 标题/时间 + 金额/账户；报销单附状态标签。
 struct TransactionRowView: View {
     let transaction: Transaction
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(ZanzanStyle.transactionRowFrameStorageKey)
+    private var showsFrame = ZanzanStyle.defaultShowsTransactionRowFrame
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(iconBackground)
-                .frame(width: 44, height: 44)
-                .overlay {
-                    Image(systemName: iconName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
+            leadingIcon
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.semibold))
                 Text(subtitle)
@@ -22,18 +18,19 @@ struct TransactionRowView: View {
                     .foregroundStyle(.secondary)
                 if let reimbursementText {
                     Text(reimbursementText)
-                        .font(.caption2)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(.systemGray6)))
+                        .background(.thinMaterial, in: .capsule)
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(amountText)
                     .font(.body.weight(.semibold))
                     .monospacedDigit()
+                    .foregroundStyle(amountColor)
                 if let accountText {
                     Text(accountText)
                         .font(.footnote)
@@ -41,26 +38,88 @@ struct TransactionRowView: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, showsFrame ? 8 : 4)
+        .padding(.vertical, showsFrame ? 2 : 0)
+        .frame(minHeight: showsFrame ? 48 : 44)
+        .background {
+            if showsFrame {
+                RoundedRectangle(cornerRadius: ZanzanStyle.sketchCompactRadius)
+                    .fill(.thinMaterial)
+            }
+        }
+        .overlay {
+            if showsFrame {
+                RoundedRectangle(cornerRadius: ZanzanStyle.sketchCompactRadius)
+                    .strokeBorder(
+                        iconBackground.opacity(colorScheme == .dark ? 0.24 : 0.30),
+                        lineWidth: 0.8
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var leadingIcon: some View {
+        switch transaction.kind {
+        case .expense, .income:
+            if let category = transaction.category {
+                Circle()
+                    .fill(iconBackground.opacity(0.16))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        CategoryIconView(category: category, size: 30)
+                    }
+                    .overlay {
+                        Circle()
+                            .strokeBorder(
+                                iconBackground.opacity(0.30),
+                                lineWidth: 0.8
+                            )
+                    }
+                    .accessibilityHidden(true)
+            } else {
+                fallbackIcon("circle.dashed")
+            }
+        case .transfer:
+            fallbackIcon("arrow.left.arrow.right")
+        case nil:
+            fallbackIcon("questionmark")
+        }
+    }
+
+    private func fallbackIcon(_ systemName: String) -> some View {
+        Circle()
+            .fill(iconBackground)
+            .frame(width: 36, height: 36)
+            .overlay {
+                Image(systemName: systemName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(iconForeground)
+            }
+            .accessibilityHidden(true)
     }
 
     private var title: String {
         switch transaction.kind {
         case .transfer:
-            String(localized: "转账")
+            ZanzanLocalization.string( "转账")
         case .expense, .income:
             switch transaction.settlementKind {
-            case .reimbursement: String(localized: "报销入账")
-            case .refund: String(localized: "退款入账")
-            case nil: transaction.category?.name ?? String(localized: "未分类")
+            case .reimbursement: ZanzanLocalization.string( "报销入账")
+            case .refund: ZanzanLocalization.string( "退款入账")
+            case nil: transaction.category?.name ?? ZanzanLocalization.string( "未分类")
             }
         case nil:
-            String(localized: "未知类型")
+            ZanzanLocalization.string( "未知类型")
         }
     }
 
     private var subtitle: String {
-        let time = transaction.occurredAt.formatted(date: .omitted, time: .shortened)
+        let time = ZanzanLocalization.formatted(
+            transaction.occurredAt,
+            date: .omitted,
+            time: .shortened
+        )
         // 到账单点出关联分类；普通流水点出备注
         let detail = transaction.settlementKind != nil
             ? transaction.category?.name
@@ -69,38 +128,43 @@ struct TransactionRowView: View {
         return "\(time) · \(detail)"
     }
 
-    private var iconName: String {
-        switch transaction.kind {
-        case .transfer:
-            "arrow.left.arrow.right"
-        case .expense, .income:
-            if let symbol = transaction.category?.iconPrimary, !symbol.isEmpty {
-                symbol
-            } else {
-                "circle.dashed"
-            }
-        case nil:
-            "questionmark"
-        }
+    private var iconBackground: Color {
+        transaction.kind?.tintColor(for: colorScheme) ?? .gray.opacity(0.55)
     }
 
-    private var iconBackground: Color {
-        switch transaction.kind {
-        case .income: .zanzanIncome
-        case .expense, .transfer: .zanzanWarm
-        case nil: Color(.systemGray3)
-        }
+    private var iconForeground: Color {
+        transaction.kind?.onTintColor(for: colorScheme) ?? .primary
+    }
+
+    private var amountColor: Color {
+        transaction.kind?.tintColor(for: colorScheme) ?? .primary
     }
 
     private var amountText: String {
-        let showsPlus = transaction.kind == .income && transaction.settlementKind == nil
-        return formatAmount(transaction.amountMinorUnits, withSign: showsPlus)
+        switch transaction.kind {
+        case .expense:
+            formatAmount(
+                -transaction.amountMinorUnits,
+                currencyCode: transaction.currencyCode
+            )
+        case .income:
+            formatAmount(
+                transaction.amountMinorUnits,
+                withSign: true,
+                currencyCode: transaction.currencyCode
+            )
+        case .transfer, nil:
+            formatAmount(
+                transaction.amountMinorUnits,
+                currencyCode: transaction.currencyCode
+            )
+        }
     }
 
     private var accountText: String? {
         switch transaction.kind {
         case .transfer:
-            "\(transaction.account?.name ?? String(localized: "未知账户")) → \(transaction.targetAccount?.name ?? String(localized: "未知账户"))"
+            "\(transaction.account?.name ?? ZanzanLocalization.string( "未知账户")) → \(transaction.targetAccount?.name ?? ZanzanLocalization.string( "未知账户"))"
         case .expense, .income, nil:
             transaction.account?.name
         }
@@ -108,8 +172,8 @@ struct TransactionRowView: View {
 
     private var reimbursementText: String? {
         switch transaction.reimbursementStatus {
-        case .waiting: String(localized: "待报销")
-        case .settled: String(localized: "已报销")
+        case .waiting: ZanzanLocalization.string( "待报销")
+        case .settled: ZanzanLocalization.string( "已报销")
         case nil: nil
         }
     }

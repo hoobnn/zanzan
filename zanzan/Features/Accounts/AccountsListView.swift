@@ -8,8 +8,8 @@ struct AccountsListView: View {
     private var accounts: [Account]
 
     @State private var isAddingAccount = false
-    @State private var editingAccount: Account?
     @State private var commandErrorMessage: String?
+    @State private var pendingDeletionID: UUID?
 
     private var groups: [(kind: AccountKind, accounts: [Account])] {
         let active = accounts.filter { !$0.isArchived }
@@ -38,6 +38,9 @@ struct AccountsListView: View {
                 }
             }
         }
+        .accessibilityIdentifier("screen.accounts")
+        .zanzanCompactList()
+        .zanzanSketchPageBackground()
         .overlay {
             if accounts.isEmpty {
                 ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点右上角添加账户"))
@@ -47,50 +50,61 @@ struct AccountsListView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("添加账户", systemImage: "plus") { isAddingAccount = true }
+                    .buttonStyle(.glassProminent)
             }
         }
         .sheet(isPresented: $isAddingAccount) {
-            AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
+            AccountFormView(title: ZanzanLocalization.string( "添加账户"), draft: AccountDraft()) { draft in
                 try AccountService(context: modelContext).createAccount(draft)
             }
         }
-        .sheet(item: $editingAccount) { account in
-            AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
-                try AccountService(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
-            }
-        }
-        .alert("操作失败", isPresented: isPresentingError) {
-            Button("好", role: .cancel) {}
-        } message: {
+        .alert("操作失败", isPresented: isPresentingError) { } message: {
             Text(commandErrorMessage ?? "")
         }
     }
 
     private func row(for account: Account) -> some View {
-        Button {
-            editingAccount = account
+        NavigationLink {
+            AccountDetailView(account: account)
         } label: {
-            HStack {
-                Image(systemName: (account.kind ?? .fund).symbolName)
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading) {
+            HStack(spacing: ZanzanStyle.compactRowSpacing) {
+                AccountIconView(account: account, size: ZanzanStyle.compactRowIconSize)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(account.name)
                     if !account.subtitle.isEmpty {
                         Text(account.subtitle).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
-                Text(formatAmount(balanceMinorUnits(of: account)))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                switch balanceResult(of: account) {
+                case let .success(balance):
+                    Text(formatAmount(balance, currencyCode: account.currencyCode))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                case .failure:
+                    Text("余额读取失败")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
-        .tint(.primary)
-        .swipeActions(edge: .trailing) {
-            Button("删除", systemImage: "trash", role: .destructive) {
+        .confirmationDialog(
+            "删除这个账户？",
+            isPresented: deletionBinding(for: account.uuid),
+            titleVisibility: .visible
+        ) {
+            Button("删除账户", role: .destructive) {
                 run { try AccountService(context: modelContext).softDeleteAccount(uuid: account.uuid) }
             }
-            Button(account.isArchived ? String(localized: "取消归档") : String(localized: "归档"),
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("删除后将不再显示该账户。存在关联流水或计划时，系统会阻止删除。")
+        }
+        .swipeActions(edge: .trailing) {
+            Button("删除", systemImage: "trash", role: .destructive) {
+                pendingDeletionID = account.uuid
+            }
+            Button(account.isArchived ? ZanzanLocalization.string( "取消归档") : ZanzanLocalization.string( "归档"),
                    systemImage: account.isArchived ? "tray.and.arrow.up" : "archivebox") {
                 run { try AccountService(context: modelContext).setArchived(uuid: account.uuid, isArchived: !account.isArchived) }
             }
@@ -98,16 +112,22 @@ struct AccountsListView: View {
     }
 
     /// ponytail: 每行一次全量求和，账户/流水量级上来再走快照缓存。
-    /// 读路径自愈：投影失败回落期初余额展示，不 crash。
-    private func balanceMinorUnits(of account: Account) -> Int {
-        (try? AccountBalanceProvider(context: modelContext).balanceMinorUnits(of: account))
-            ?? account.initialBalanceMinorUnits
+    /// 读取失败必须显式披露，不能把期初余额伪装成当前余额。
+    private func balanceResult(of account: Account) -> Result<Int, any Error> {
+        Result { try AccountBalanceProvider(context: modelContext).balanceMinorUnits(of: account) }
     }
 
     private var isPresentingError: Binding<Bool> {
         Binding(
             get: { commandErrorMessage != nil },
             set: { if !$0 { commandErrorMessage = nil } }
+        )
+    }
+
+    private func deletionBinding(for uuid: UUID) -> Binding<Bool> {
+        Binding(
+            get: { pendingDeletionID == uuid },
+            set: { if !$0, pendingDeletionID == uuid { pendingDeletionID = nil } }
         )
     }
 

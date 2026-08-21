@@ -4,48 +4,63 @@ import SwiftUI
 struct MonthSummaryCard: View {
     let expenseMinorUnits: Int
     let incomeMinorUnits: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "dollarsign.circle") // 预留主题图标
-                Text("月结余")
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.caption2.weight(.bold))
-                    .accessibilityHidden(true)
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color.zanzanWarm)
-            Text(formatAmount(incomeMinorUnits - expenseMinorUnits))
-                .font(.system(size: 40, weight: .heavy))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-            HStack(spacing: 24) {
-                labeledAmount("总支出", expenseMinorUnits)
-                labeledAmount("总收入", incomeMinorUnits)
-            }
-            // ponytail: 第二页（预算卡）后续切片，先落页点视觉
-            HStack(spacing: 6) {
-                Circle().fill(Color(.systemGray3)).frame(width: 6, height: 6)
-                Circle().fill(Color(.systemGray5)).frame(width: 6, height: 6)
-            }
-            .frame(maxWidth: .infinity)
-            .accessibilityHidden(true)
-        }
-        .padding(.vertical, 8)
+    private var balanceMinorUnits: Int {
+        incomeMinorUnits - expenseMinorUnits
     }
 
-    private func labeledAmount(_ title: LocalizedStringKey, _ minorUnits: Int) -> some View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                Text("月结余")
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.footnote.bold())
+                    .accessibilityHidden(true)
+            }
+            .font(.subheadline)
+            .bold()
+            .foregroundStyle(.tint)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 28)
+            .background(Color.zanzanSun.opacity(0.14), in: .capsule)
+            Text(formatAmount(balanceMinorUnits))
+                .font(.title2)
+                .bold()
+                .monospacedDigit()
+                .foregroundStyle(
+                    balanceMinorUnits == 0
+                        ? Color.primary
+                        : (balanceMinorUnits > 0 ? .zanzanIncome : .zanzanExpense)
+                )
+                .contentTransition(reduceMotion ? .identity : .numericText())
+            HStack(spacing: 12) {
+                labeledAmount("总支出", expenseMinorUnits, color: .zanzanExpense)
+                labeledAmount("总收入", incomeMinorUnits, color: .zanzanIncome)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .zanzanSketchCard(tint: .zanzanSun)
+    }
+
+    private func labeledAmount(
+        _ title: LocalizedStringKey,
+        _ minorUnits: Int,
+        color: Color
+    ) -> some View {
         HStack(spacing: 6) {
             Text(title).foregroundStyle(.tertiary)
-            Text(formatAmount(minorUnits)).foregroundStyle(.secondary).monospacedDigit()
+            Text(formatAmount(minorUnits))
+                .foregroundStyle(color)
+                .monospacedDigit()
         }
         .font(.subheadline)
     }
 }
 
 #Preview {
-    List {
-        MonthSummaryCard(expenseMinorUnits: 0, incomeMinorUnits: 1200)
-    }
+    MonthSummaryCard(expenseMinorUnits: 328_00, incomeMinorUnits: 8_600_00)
+        .padding()
 }

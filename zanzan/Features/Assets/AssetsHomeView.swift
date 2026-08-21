@@ -4,6 +4,7 @@ import SwiftUI
 /// 资产 Tab 首页：净资产总览 + 借入借出 + 按大类分组的账户列表（钱迹风格）。
 struct AssetsHomeView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(filter: #Predicate<Account> { !$0.isSoftDeleted }, sort: \Account.sortOrder)
     private var accounts: [Account]
     /// ponytail: 仅作余额失效信号——余额在投影内派生，流水变动时借它触发重算。
@@ -13,36 +14,32 @@ struct AssetsHomeView: View {
     @AppStorage("hidesAssetAmounts") private var hidesAmounts = false
     @State private var collapsedKinds: Set<AccountKind> = []
     @State private var isAddingAccount = false
-    @State private var editingAccount: Account?
     @State private var isShowingManagement = false
 
-    private var overview: AssetsOverview {
+    private var overviewResult: Result<AssetsOverview, any Error> {
         _ = (accounts.count, transactions.count) // 声明对两组数据的依赖
-        return (try? AssetsOverviewProvider(context: modelContext).overview())
-            ?? AssetsOverview(groups: [], totalAssetsMinorUnits: 0, totalLiabilitiesMinorUnits: 0,
-                              borrowedTotalMinorUnits: 0, lentTotalMinorUnits: 0)
+        return Result { try AssetsOverviewProvider(context: modelContext).overview() }
     }
 
     var body: some View {
-        let overview = overview
-        List {
-            netWorthSection(overview)
-            loanSection(overview)
-            ForEach(overview.groups, id: \.kind) { group in
-                groupSection(group)
+        Group {
+            switch overviewResult {
+            case let .success(overview):
+                overviewList(overview)
+            case let .failure(error):
+                ContentUnavailableView(
+                    "资产读取失败",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error.localizedDescription)
+                )
             }
         }
-        .listSectionSpacing(14)
-        .contentMargins(.top, 0, for: .scrollContent)
-        .overlay {
-            if accounts.isEmpty {
-                ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点右上角添加账户"))
-            }
-        }
+        .zanzanSketchPageBackground()
         .navigationTitle("资产")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("添加账户", systemImage: "plus") { isAddingAccount = true }
+                    .buttonStyle(.glassProminent)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("账户管理", systemImage: "ellipsis") { isShowingManagement = true }
@@ -57,14 +54,49 @@ struct AssetsHomeView: View {
             AccountsListView()
         }
         .sheet(isPresented: $isAddingAccount) {
-            AccountFormView(title: String(localized: "添加账户"), draft: AccountDraft()) { draft in
+            AccountFormView(title: ZanzanLocalization.string( "添加账户"), draft: AccountDraft()) { draft in
                 try AccountService(context: modelContext).createAccount(draft)
             }
         }
-        .sheet(item: $editingAccount) { account in
-            AccountFormView(title: String(localized: "编辑账户"), draft: AccountDraft(account: account)) { draft in
-                try AccountService(context: modelContext).updateAccount(uuid: account.uuid, draft: draft)
+    }
+
+    private func overviewList(_ overview: AssetsOverview) -> some View {
+        List {
+            netWorthSection(overview)
+            if !overview.fxFallbackCurrencyCodes.isEmpty {
+                fxFallbackSection(overview.fxFallbackCurrencyCodes)
             }
+            loanSection(overview)
+            ForEach(overview.groups, id: \.kind) { group in
+                groupSection(group)
+            }
+        }
+        .listSectionSpacing(ZanzanStyle.sketchSectionSpacing)
+        .contentMargins(.top, 0, for: .scrollContent)
+        .overlay {
+            if accounts.isEmpty {
+                ContentUnavailableView("还没有账户", systemImage: "creditcard", description: Text("点右上角添加账户"))
+            }
+        }
+    }
+
+    private func fxFallbackSection(_ currencyCodes: Set<String>) -> some View {
+        Section {
+            Label {
+                Text(
+                    "缺少 \(currencyCodes.sorted().joined(separator: ", ")) 汇率快照，跨币种汇总暂按 1:1 折算"
+                )
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(.footnote)
+            .foregroundStyle(.orange)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .zanzanSketchCard(tint: .orange)
+            .accessibilityHint("录入对应币种流水汇率后，资产汇总会自动按最新快照折算")
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
         }
     }
 
@@ -72,30 +104,40 @@ struct AssetsHomeView: View {
 
     private func netWorthSection(_ overview: AssetsOverview) -> some View {
         Section {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Text("净资产")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Button(hidesAmounts ? String(localized: "显示金额") : String(localized: "隐藏金额"),
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.zanzanMint.opacity(0.14), in: .capsule)
+                    Button(hidesAmounts ? ZanzanLocalization.string( "显示金额") : ZanzanLocalization.string( "隐藏金额"),
                            systemImage: hidesAmounts ? "eye.slash.fill" : "eye.fill") {
                         hidesAmounts.toggle()
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 }
                 Text(money(overview.netWorthMinorUnits))
-                    .font(.system(size: 40, weight: .heavy))
+                    .font(.title)
+                    .bold()
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                HStack(spacing: 24) {
+                HStack(spacing: 16) {
                     labeledAmount("总资产", overview.totalAssetsMinorUnits)
                     labeledAmount("总负债", overview.totalLiabilitiesMinorUnits)
                 }
             }
-            .padding(.vertical, 10)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .zanzanSketchCard(tint: .zanzanMint)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
         }
     }
 
@@ -113,9 +155,9 @@ struct AssetsHomeView: View {
         Section {
             HStack(spacing: 12) {
                 loanCard("总借入", amount: overview.borrowedTotalMinorUnits,
-                         symbol: "arrow.down", tint: Color(.darkGray))
+                         symbol: "arrow.down", tint: .zanzanExpense)
                 loanCard("总借出", amount: overview.lentTotalMinorUnits,
-                         symbol: "arrow.up", tint: .mint)
+                         symbol: "arrow.up", tint: .zanzanIncome)
             }
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
@@ -127,7 +169,7 @@ struct AssetsHomeView: View {
             Image(systemName: symbol)
                 .font(.headline)
                 .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
+                .frame(width: 32, height: 32)
                 .background(RoundedRectangle(cornerRadius: 10).fill(tint))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline).foregroundStyle(.secondary)
@@ -136,7 +178,7 @@ struct AssetsHomeView: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color(.secondarySystemGroupedBackground)))
+        .zanzanSketchCard(tint: tint)
     }
 
     // MARK: - 账户分组
@@ -155,9 +197,11 @@ struct AssetsHomeView: View {
 
     private func groupHeader(_ group: AssetsOverview.Group) -> some View {
         Button {
-            withAnimation {
-                if !collapsedKinds.insert(group.kind).inserted {
-                    collapsedKinds.remove(group.kind)
+            if reduceMotion {
+                toggleGroup(group.kind)
+            } else {
+                withAnimation {
+                    toggleGroup(group.kind)
                 }
             }
         } label: {
@@ -174,35 +218,38 @@ struct AssetsHomeView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(collapsedKinds.contains(group.kind) ? -90 : 0))
             }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(.rect)
         .textCase(nil)
-        .accessibilityHint(collapsedKinds.contains(group.kind) ? String(localized: "展开分组") : String(localized: "折叠分组"))
+        .accessibilityHint(collapsedKinds.contains(group.kind) ? ZanzanLocalization.string( "展开分组") : ZanzanLocalization.string( "折叠分组"))
+    }
+
+    private func toggleGroup(_ kind: AccountKind) {
+        if !collapsedKinds.insert(kind).inserted {
+            collapsedKinds.remove(kind)
+        }
     }
 
     private func groupSummary(_ group: AssetsOverview.Group) -> String {
-        var parts = [String(localized: "余额: \(money(group.balanceTotalMinorUnits))")]
+        var parts = [ZanzanLocalization.string( "余额: \(money(group.balanceTotalMinorUnits))")]
         if group.debtTotalMinorUnits > 0 {
-            parts.append(String(localized: "欠款: \(money(group.debtTotalMinorUnits))"))
+            parts.append(ZanzanLocalization.string( "欠款: \(money(group.debtTotalMinorUnits))"))
         }
         return parts.joined(separator: "  ")
     }
 
     private func accountRow(_ item: AssetsOverview.Item) -> some View {
-        Button {
-            editingAccount = item.account
+        NavigationLink {
+            AccountDetailView(account: item.account)
         } label: {
-            HStack(spacing: 12) {
-                // ponytail: 银行图标资源预留——先用大类 SF Symbol 占位，icon 四件套资源就位后按账户渲染。
-                Image(systemName: (item.account.kind ?? .fund).symbolName)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.tint)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(Color(.systemGray6)))
+            HStack(spacing: 10) {
+                AccountIconView(account: item.account, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.account.name)
                         .font(.headline)
@@ -213,17 +260,30 @@ struct AssetsHomeView: View {
                     }
                 }
                 Spacer()
-                Text(money(item.balanceMinorUnits))
+                Text(money(item.balanceMinorUnits, currencyCode: item.account.currencyCode))
                     .font(.body.weight(.medium))
                     .monospacedDigit()
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(minHeight: 52)
+            .zanzanSketchCard(tint: .zanzanSky)
         }
-        .tint(.primary)
+        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+        .listRowBackground(Color.clear)
     }
 
     /// 金额展示统一走这里，支持一键隐藏。
-    private func money(_ minorUnits: Int) -> String {
-        hidesAmounts ? "¥ ****" : formatAmount(minorUnits)
+    private func money(
+        _ minorUnits: Int,
+        currencyCode: String = FxConversion.baseCurrencyCode
+    ) -> String {
+        guard !hidesAmounts else {
+            return currencyCode == FxConversion.baseCurrencyCode
+                ? "¥ ****"
+                : "\(currencyCode) ****"
+        }
+        return formatAmount(minorUnits, currencyCode: currencyCode)
     }
 }
 

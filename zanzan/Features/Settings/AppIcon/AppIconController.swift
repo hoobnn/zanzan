@@ -27,7 +27,7 @@ final class AppIconController {
         failure = nil
 
         guard supportsAlternateIcons else {
-            failure = AppIconChangeFailure(message: String(localized: "当前设备或运行环境不支持切换应用图标。"))
+            failure = AppIconChangeFailure(message: ZanzanLocalization.string( "当前设备或运行环境不支持切换应用图标。"))
             return
         }
 
@@ -41,7 +41,7 @@ final class AppIconController {
             selectedIcon = option
         } catch {
             refreshSelection()
-            failure = AppIconChangeFailure(message: String(localized: "\(error.localizedDescription) 请稍后重试。"))
+            failure = AppIconChangeFailure(message: ZanzanLocalization.string( "\(error.localizedDescription) 请稍后重试。"))
         }
     }
 }

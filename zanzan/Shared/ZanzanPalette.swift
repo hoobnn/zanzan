@@ -1,11 +1,26 @@
 import SwiftUI
 
-/// 复刻稿取色占位——正式主题色定稿后统一在此调整。
+/// 业务语义色：收入绿、支出红、转账暖金；普通交互保持中性。
 extension Color {
-    /// 记账主色（红橙）：金额展示、完成键、选中分类
-    static let zanzanAccent = Color(red: 0.88, green: 0.44, blue: 0.35)
-    /// 流水图标底色（支出/转账）与月结余点缀色（暖黄）
-    static let zanzanWarm = Color(red: 0.96, green: 0.73, blue: 0.25)
-    /// 流水图标底色（收入，绿）
-    static let zanzanIncome = Color(red: 0.36, green: 0.73, blue: 0.50)
+    static let zanzanWarm = Color(red: 0.95, green: 0.70, blue: 0.25)
+    static let zanzanExpense = Color(red: 0.86, green: 0.22, blue: 0.28)
+    static let zanzanIncome = Color(red: 0.07, green: 0.59, blue: 0.43)
+    static let zanzanCoral = Color(red: 0.96, green: 0.47, blue: 0.43)
+    static let zanzanMint = Color(red: 0.27, green: 0.76, blue: 0.63)
+    static let zanzanSky = Color(red: 0.31, green: 0.62, blue: 0.94)
+    static let zanzanSun = Color(red: 0.98, green: 0.76, blue: 0.27)
+    static let zanzanLilac = Color(red: 0.65, green: 0.50, blue: 0.91)
+
+    static func zanzan(token: String) -> Color {
+        switch token {
+        case "green": .green
+        case "orange": .orange
+        case "red": .red
+        case "purple": .purple
+        case "pink": .pink
+        case "teal": .teal
+        case "gray": .gray
+        default: .blue
+        }
+    }
 }

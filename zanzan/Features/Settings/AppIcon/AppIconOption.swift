@@ -17,17 +17,17 @@ nonisolated enum AppIconOption: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .emerald: String(localized: "翡翠")
-        case .ivory: String(localized: "象牙白")
-        case .midnight: String(localized: "深墨")
+        case .emerald: ZanzanLocalization.string( "翡翠")
+        case .ivory: ZanzanLocalization.string( "象牙白")
+        case .midnight: ZanzanLocalization.string( "深墨")
         }
     }
 
     var detail: String {
         switch self {
-        case .emerald: String(localized: "浅色与深色随系统外观切换")
-        case .ivory: String(localized: "始终使用明亮的象牙白背景")
-        case .midnight: String(localized: "始终使用沉稳的深墨色背景")
+        case .emerald: ZanzanLocalization.string( "浅色与深色随系统外观切换")
+        case .ivory: ZanzanLocalization.string( "始终使用明亮的象牙白背景")
+        case .midnight: ZanzanLocalization.string( "始终使用沉稳的深墨色背景")
         }
     }
 
