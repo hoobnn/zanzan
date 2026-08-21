@@ -21,7 +21,8 @@
 ## 构建与测试
 
 - `xcodebuild build -project zanzan.xcodeproj -scheme zanzan -destination 'generic/platform=iOS Simulator' -quiet`
-- `xcodebuild test -project zanzan.xcodeproj -scheme zanzan -only-testing:zanzanTests -destination 'platform=iOS Simulator,name=iPhone 17' -quiet`（去掉 `-only-testing` 含 UI 测试）
+- `xcodebuild test -project zanzan.xcodeproj -scheme zanzan -only-testing:zanzanTests -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled YES -parallel-testing-worker-count 2 -maximum-concurrent-test-simulator-destinations 2 -quiet`（去掉 `-only-testing` 含 UI 测试）
+- 同一时间只运行一个 `xcodebuild test`，其内部最多并行 2 个测试实例；结束且确认没有 `xcodebuild` / `xctest` / `XCTRunner` 进程后，立即清空 `/Users/haobin/Library/Developer/XCTestDevices` 的子目录并复核为 0，禁止测试运行中清理
 - 使用当前默认 Xcode 工具链，**不要设置 `DEVELOPER_DIR`**
 - `pnpm install` 启用 husky + commitlint 提交校验
 
